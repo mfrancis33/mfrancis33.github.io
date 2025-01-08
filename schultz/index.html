@@ -353,12 +353,12 @@
 				<li>Each <strong>one</strong> is worth 100 points</li>
 				<li><strong>Three-of-a-kinds</strong> are scored as follows:</li>
 				<ul>
-					<li><strong>Three 1's</strong> is 1000 points</li>
 					<li><strong>Three 2's</strong> is 200 points</li>
 					<li><strong>Three 3's</strong> is 300 points</li>
 					<li><strong>Three 4's</strong> is 400 points</li>
 					<li><strong>Three 5's</strong> is 500 points</li>
 					<li><strong>Three 6's</strong> is 600 points</li>
+					<li><strong>Three 1's</strong> is <i>NOT</i> 1000 points, it is 300 points</li>
 				</ul>
 				<li>A <strong>straight</strong> (1-2-3-4-5 or 2-3-4-5-6) is 1000 points</li>
 				<li>A <strong>five-of-a-kind</strong> is worth 1500 points</li>
@@ -554,11 +554,7 @@
 						}
 						updateScore();
 					} else if(this.value == 1){
-						if(this.linked.length > 0){
-							tempscore += 1000 * (this.held ? 1 : -1);
-						} else {
-							tempscore += 100 * (this.held ? 1 : -1);
-						}
+						tempscore += 100 * (this.held ? 1 : -1);
 						updateScore();
 					}
 					
@@ -1049,9 +1045,8 @@
 					return;
 				}
 				//Look for triples
-				if(nums[1] >= 3 || nums[2] >= 3 || nums[3] >= 3 || nums[4] >= 3 || nums[5] >= 3 || nums[6] >= 3){
+				if(nums[2] >= 3 || nums[3] >= 3 || nums[4] >= 3 || nums[5] >= 3 || nums[6] >= 3){
 					let num;
-					if(nums[1] >= 3) num = 1;
 					if(nums[2] >= 3) num = 2;
 					if(nums[3] >= 3) num = 3;
 					if(nums[4] >= 3) num = 4;
