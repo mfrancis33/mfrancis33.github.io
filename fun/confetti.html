@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+		<title>Confetti</title>
+		<style>
+			body {
+				font-family: sans-serif;
+				margin: 0;
+				width: 100vw;
+				height: 100vh;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				user-select: none;
+				background-color: black;
+				color: white;
+			}
+			canvas {
+				width: 100vw;
+				height: 100vh;
+				position: fixed;
+				top: 0;
+				left: 0;
+				z-index: 2;
+				pointer-events: none;
+			}
+			p {
+				animation: fade 1s ease-in-out 4s forwards;
+			}
+			
+			#openmenu {
+				position: fixed;
+				top: 8pt;
+				right: 8pt;
+				z-index: 3;
+				opacity: 1;
+				transition: opacity 0.4s ease;
+			}
+			#openmenu.hidden {
+				opacity: 0;
+				pointer-events: none;
+			}
+			#menu {
+				z-index: 999;
+				-webkit-backdrop-filter: blur(6px);
+				backdrop-filter: blur(6px);
+				display: inline-flex;
+				flex-direction: column;
+				gap: 8pt;
+				padding: 8pt;
+				box-sizing: border-box;
+				position: fixed;
+				top: 0;
+				right: 0;
+				height: 100vh;
+				transform: translateX(100%);
+				transition: transform 0.4s ease;
+			}
+			#menu.open {
+				transform: translateX(0);
+			}
+			img {
+				border-radius: 8px;
+				box-shadow: 0 0 0 white;
+				cursor: pointer;
+			}
+			img.active {
+				box-shadow: 0 0 4px white;
+				filter: drop-shadow(0 0 4px white);
+			}
+			
+			.yipee {
+				background-image: url("tbh.png");
+				background-size: contain;
+				background-repeat: no-repeat;
+				background-position: center center;
+			}
+			
+			@keyframes fade {
+				from {opacity: 1;}
+				to   {opacity: 0; display: none;}
+			}
+		</style>
+	</head>
+	<body>
+		<p>Click to create confetti!</p>
+		<canvas></canvas>
+		<script>
+			const canv = document.querySelector("canvas");
+			const ctx = canv.getContext("2d");
+			ctx.font = "16px sans-serif";
+			ctx.textAlign = "left";
+			ctx.textBaseline = "top";
+			
+			function resize(){
+				const b = document.body.getBoundingClientRect();
+				canv.width = b.width;
+				canv.height = b.height;
+			}
+			window.onresize = resize;
+			resize();
+			
+			const particles = [];
+			
+			let particleDrawing = false;
+			
+			const yipeeAudio = new Audio("yipee.mp3");
+			
+			let yipee = false;
+			let single = false;
+			let nuclear = false;
+			let debug = false;
+			
+			const PXVSF = 0.3; //particle x-velocity scaling factor
+			const PYVSF = 0.6; //particle y-velocity scaling factor
+			
+			class Particle {
+				d = 5; //default minimum side length for rectangles
+				
+				constructor(x, y, a, xv, yv, av, r, s, c){
+					//Positions and rotations
+					this.x = x;
+					this.y = y;
+					this.a = a; //angle
+					//Velocities
+					this.xv = xv;
+					this.yv = yv;
+					this.av = av;
+					//Visuals
+					this.r = r; //size ratio
+					this.s = s; //size scaling
+					this.c = c; //color
+				}
+				
+				draw(){
+					//Save canvas things for later
+					ctx.save();
+					//Transformations
+					ctx.translate(this.x, this.y);
+					ctx.scale(this.s, this.s);
+					ctx.rotate(this.a);
+					//Create rectangle
+					ctx.fillStyle = this.c;
+					let w = this.r > 1 ? this.d * this.r : this.d;
+					let h = this.r < 1 ? this.d * (1/this.r) : this.d;
+					ctx.fillRect(-w/2, -h/2, w, h);
+					//Restore canvas to as it was before
+					ctx.restore();
+				}
+				
+				tick(delta){
+					//Update positions
+					this.x += this.xv * delta;
+					this.y += this.yv * delta;
+					this.a += this.av * delta;
+					//Update velocities
+					this.xv *= PXVSF ** delta;
+					this.yv = (canv.height/2 - this.yv) * PYVSF*delta + this.yv;
+					//Return whether we want to keep this
+					return this.y < canv.height;
+				}
+			}
+			
+			function hslToHex(h, s, l) {
+				l /= 100;
+				const a = s * Math.min(l, 1 - l) / 100;
+				const f = n => {
+					const k = (n + h / 30) % 12;
+					const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+					return Math.round(255 * color).toString(16).padStart(2, '0');   // convert to Hex and prefix "0" if needed
+				};
+				return "#" + f(0) + f(8) + f(4);
+			}
+			
+			function confetti(){
+				const PMXV = -canv.width / Math.log(PXVSF); //particle max x-velocity, figured out using calculus
+				
+				const particleNum = single ? 1 : (nuclear ? (canv.width * 8) : (canv.width / 2));
+				for(let i = 0; i < particleNum; i++){
+					particles.push(new Particle(
+						canv.width / 2,                                    //x, set to middle of screen
+						Math.random() * -50,                               //y, set to top of screen
+						Math.random() * Math.PI,                           //angle, between 0 and 180 deg (looks same after)
+						Math.random() * PMXV * 2 - PMXV,                   //x velocity, figures out velocity needed to travel to one side of screen
+						Math.random() * canv.height / 2 + canv.height / 4, //y velocity with speeds relative to actual height
+						Math.random() * Math.PI * 2 - Math.PI,             //angle velocity, between -180 and 180 deg/sec
+						Math.random() * 2 + 0.25,                          //size ratio, between 0.5 and 2, which is self-similar
+						Math.random() * 1.5 + 0.5,                         //size scaling, between 0.5 and 2
+						(() => hslToHex(Math.random() * 360, 100, 75))()   //color
+					));
+				}
+				
+				let lt = 0; //last t
+				let pfps = []; //past fps
+				function draw(t){
+					if(lt === 0) lt = t;
+					//For the first frame, delta will be 0
+					const delta = (t - lt) / 1000;
+					lt = t;
+					//Deal with fps since last frame
+					pfps.push(1 / delta);
+					if(pfps.length > 10) pfps.shift();
+					//Clear previous
+					ctx.clearRect(0, 0, canv.width, canv.height);
+					//Draw
+					let copy = [...particles];
+					for(let i = copy.length - 1; i >= 0; i--){
+						let p = copy[i];
+						if(p.tick(delta))
+							p.draw();
+						else
+							particles.splice(i, 1);
+					}
+					if(particles.length > 0){
+						//Print debug on screen
+						if(debug){
+							ctx.fillStyle = "#fff";
+							ctx.fillText("Particles: " + particles.length, 10, 10);
+							const fpsAvg = Math.round(pfps.reduce((a, b) => a + b) / pfps.length);
+							ctx.fillText("FPS (avg rounded): " + (isFinite(fpsAvg) ? fpsAvg : Math.round(1 / delta)), 10, 30);
+							ctx.fillText("Highest recent FPS: " + Math.max(...pfps), 10, 50);
+							ctx.fillText("Lowest recent FPS: " + Math.min(...pfps), 10, 70);
+						}
+						//Schedule another frame
+						window.requestAnimationFrame(draw);
+					} else {
+						particleDrawing = false;
+						window.requestAnimationFrame(() => {ctx.clearRect(0, 0, canv.width, canv.height);});
+						pfps = [];
+					}
+				}
+				if(!particleDrawing){
+					window.requestAnimationFrame(draw);
+					particleDrawing = true;
+				}
+			}
+			document.body.onclick = function(){
+				if(yipee){
+					const sound = yipeeAudio.cloneNode(false);
+					sound.onended = function(){
+						sound.remove();
+						delete sound;
+					}
+					sound.play();
+				}
+				confetti();
+			};
+		</script>
+	</body>
+</html>

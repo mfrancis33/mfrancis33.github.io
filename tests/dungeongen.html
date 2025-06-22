@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<title>Dungeon Generator v2</title>
+		<style>
+			body {
+				font-family: sans-serif;
+				background-color: #333;
+				color: white;
+			}
+			canvas {
+				max-width: 100%;
+				max-height: 96vh;
+			}
+		</style>
+	</head>
+	<body>
+		<canvas width=1000 height=1000></canvas>
+		<script>
+			const s = 20;
+			const ctx = document.querySelector("canvas").getContext("2d");
+			const map = [];
+			for(let i = 0; i < 50; i++){
+				let arr = new Array(50);
+				arr.fill("void");
+				map.push(arr);
+			}
+			const minS = 5;
+			const maxS = 12;
+			const branchDepth = 12;
+			const queue = [];
+			
+			ctx.fillStyle = "black";
+			ctx.fillRect(0, 0, 1000, 1000);
+			
+			//Generates a random integer from min to max inclusive
+			function randInt(min, max){
+				return Math.floor(Math.random() * (max - min)) + min;
+			};
+			
+			//Creates a room without a starting "door"
+			function startRoom(x, y, w, h){
+				//Starting room will always have walls. But what about flooring?
+				let floor = Math.random() < 0.5 ? "cobble" : "wood";
+				
+				//Fill in the space
+				for(let i = x; i < x + w; i++){
+					for(let j = y; j < y + h; j++){
+						if(i === x || i === x + w - 1 || j === y || j === y + h - 1){
+							map[i][j] = "wall";
+						} else {
+							map[i][j] = floor;
+						}
+					}
+				}
+				map[randInt(x + 1, x + w - 1)][randInt(y + 1, y + h - 1)] = "start";
+				
+				//Determine doors and their locations on walls
+				let doors = randInt(2, 4);
+				
+				let sides = (() => {
+					let dirs = ["n", "w", "s", "e"];
+					if(doors == 4) return dirs;
+					let arr = [];
+					for(let i = 0; i < doors; i++){
+						let temp;
+						do {
+							temp = dirs[randInt(0, 3)];
+						} while(arr.indexOf(temp) > -1);
+						arr.push(temp);
+					}
+					return arr;
+				})();
+				
+				//Add doors to queue
+				if(sides.indexOf("n") > -1){
+					let doorX = randInt(x + 1, x + w - 2);
+					queue.push({
+						x: doorX,
+						y: y,
+						dir: "n",
+						depth: branchDepth
+					});
+				}
+				if(sides.indexOf("w") > -1){
+					let doorY = randInt(y + 1, y + h - 2);
+					queue.push({
+						x: x,
+						y: doorY,
+						dir: "w",
+						depth: branchDepth
+					});
+				}
+				if(sides.indexOf("s") > -1){
+					let doorX = randInt(x + 1, x + w - 2);
+					queue.push({
+						x: doorX,
+						y: y + h - 1,
+						dir: "s",
+						depth: branchDepth
+					});
+				}
+				if(sides.indexOf("e") > -1){
+					let doorY = randInt(y + 1, y + h - 2);
+					queue.push({
+						x: x + w - 1,
+						y: doorY,
+						dir: "e",
+						depth: branchDepth
+					});
+				}
+			}
+			
+			//Creates a room from a door
+			function extendRoom(sx, sy, dir, depth){
+				if(depth <= 0) return;
+				
+				//Calculate available space in one direction
+				let availableSpace = 0;
+				
+				switch(dir){
+					default: throw "Invalid direction: " + dir; //filter out invalid directions
+					case "n": {
+						let y = sy - 1;
+						while(y >= 0 && map[sx][y] === "void"){
+							y--;
+							availableSpace++;
+						}
+						break;
+					}
+					case "w": {
+						let x = sx - 1;
+						while(x >= 0 && map[x][sy] === "void"){
+							x--;
+							availableSpace++;
+						}
+						break;
+					}
+					case "s": {
+						let y = sy + 1;
+						while(y < map[sx].length && map[sx][y] === "void"){
+							y++;
+							availableSpace++;
+						}
+						break;
+					}
+					case "e": {
+						let x = sx + 1;
+						while(x < map.length && map[x][sy] === "void"){
+							x++;
+							availableSpace++;
+						}
+						break;
+					}
+				}
+				//If we don't have enough space, return
+				if(availableSpace < minS) return;
+				
+				//At this point we can calculate one of the dimensions
+				let w, h;//set up both variables
+				switch(dir){
+					case "n": case "s":
+						h = randInt(minS, Math.min(maxS, availableSpace));
+						break;
+					case "w": case "e":
+						w = randInt(minS, Math.min(maxS, availableSpace));
+						break;
+				}
+				
+				//Now we check the other direction to see how much real estate we have there
+				let spaceRight = 999;//right/down (positive)
+				let spaceLeft = 999;//left/up (negative)
+				
+				switch(dir){
+					case "n":
+						for(let y = sy - 1; y >= sy - availableSpace; y--){
+							//Check right
+							let x = sx + 1;
+							let temp = 0;
+							while(x < map.length && map[x][y] === "void"){
+								x++;
+								temp++;
+							}
+							spaceRight = Math.min(spaceRight, temp);
+							//Check left
+							x = sx - 1;
+							temp = 0;
+							while(x >= 0 && map[x][y] === "void"){
+								x--;
+								temp++;
+							}
+							spaceLeft = Math.min(spaceLeft, temp);
+						}
+						break;
+					case "w":
+						for(let x = sx - 1; x >= sx - availableSpace; x--){
+							//Check down
+							let y = sy + 1;
+							let temp = 0;
+							while(y < map.length && map[x][y] === "void"){
+								y++;
+								temp++;
+							}
+							spaceRight = Math.min(spaceRight, temp);
+							//Check up
+							y = sy - 1;
+							temp = 0;
+							while(y >= 0 && map[x][y] === "void"){
+								y--;
+								temp++;
+							}
+							spaceLeft = Math.min(spaceLeft, temp);
+						}
+						break;
+					case "s":
+						for(let y = sy + 1; y <= sy + availableSpace; y++){
+							//Check right
+							let x = sx + 1;
+							let temp = 0;
+							while(x < map.length && map[x][y] === "void"){
+								x++;
+								temp++;
+							}
+							spaceRight = Math.min(spaceRight, temp);
+							//Check left
+							x = sx - 1;
+							temp = 0;
+							while(x >= 0 && map[x][y] === "void"){
+								x--;
+								temp++;
+							}
+							spaceLeft = Math.min(spaceLeft, temp);
+						}
+						break;
+					case "e":
+						for(let x = sx + 1; x <= sx + availableSpace; x++){
+							//Check down
+							let y = sy + 1;
+							let temp = 0;
+							while(y < map.length && map[x][y] === "void"){
+								y++;
+								temp++;
+							}
+							spaceRight = Math.min(spaceRight, temp);
+							//Check up
+							y = sy - 1;
+							temp = 0;
+							while(y >= 0 && map[x][y] === "void"){
+								y--;
+								temp++;
+							}
+							spaceLeft = Math.min(spaceLeft, temp);
+						}
+						break;
+				}
+				//If we don't have enough space, return;
+				if(spaceLeft < 1 || spaceRight < 1 || spaceLeft + spaceRight < minS) return;
+				
+				//Figure out the other variable (width/height)
+				let wallOffset;
+				switch(dir){
+					case "n": case "s":
+						wallOffset = randInt(1, Math.min(spaceLeft, maxS - 1));
+						w = randInt(Math.max(minS, wallOffset+2), Math.min(maxS, spaceRight + wallOffset+2));
+						break;
+					case "w": case "e":
+						wallOffset = randInt(1, Math.min(spaceLeft, maxS - 1));
+						h = randInt(Math.max(minS, wallOffset+2), Math.min(maxS, spaceRight + wallOffset+2));
+						break;
+				}
+				
+				//Figure out starting location for filling in things
+				let x, y;
+				switch(dir){
+					case "n":
+						x = sx - wallOffset;
+						y = sy - h + 1;
+						break;
+					case "w":
+						x = sx - w + 1;
+						y = sy - wallOffset;
+						break;
+					case "s":
+						x = sx - wallOffset;
+						y = sy;
+						break;
+					case "e":
+						x = sx;
+						y = sy - wallOffset;
+						break;
+				}
+				//Sometimes we have invalid starting position so just stop in that case
+				if(x < 0 || x >= map.length || y < 0 || y >= map[x].length){
+					return;
+				}
+				
+				//Figure out materials
+				let floor = Math.random() < 0.5 ? "cobble" : "wood";
+				let wall = [floor, "books", "wall", "wall", "wall", "wall"][Math.floor(Math.random() * 6)];
+				
+				//Fill in the space
+				for(let i = x; i < x + w; i++){
+					for(let j = y; j < y + h; j++){
+						if(i === x || i === x + w - 1 || j === y || j === y + h - 1){
+							map[i][j] = wall;
+						} else if(map[i][j] !== "wall" && map[i][j] !== "books") {
+							map[i][j] = floor;
+						}
+					}
+				}
+				if(wall !== floor) map[sx][sy] = "door";
+				//else map[sx][sy] = "test";
+				
+				//Determine if we can create more rooms (have we reached max depth)
+				if(depth > 1){
+					//Determine doors and their locations on walls
+					let doors = randInt(1, 4);
+					
+					let dirs = ["n", "w", "s", "e"];
+					if(doors == 4) return dirs;
+					let sides = [];
+					for(let i = 0; i < doors; i++){
+						/**
+						 * For the amount of doors we want, pick a door side we haven't alrady picked
+						 * Then, depending on which direction that is, push it to the queue with
+						 * different x and y positions.
+						 * Make sure to subtract the depth by 1.
+						 */
+						let dir;
+						do {
+							dir = dirs[randInt(0, 3)];
+						} while(sides.indexOf(dir) > -1);
+						sides.push(dir);
+						
+						switch(dir){
+							case "n": {
+								let doorX = randInt(x + 1, x + w - 2);
+								queue.push({
+									x: doorX,
+									y: y,
+									dir: "n",
+									depth: depth - 1
+								});
+							}
+							case "w": {
+								let doorY = randInt(y + 1, y + h - 2);
+								queue.push({
+									x: x,
+									y: doorY,
+									dir: "w",
+									depth: depth - 1
+								});
+							}
+							case "s": {
+								let doorX = randInt(x + 1, x + w - 2);
+								queue.push({
+									x: doorX,
+									y: y + h - 1,
+									dir: "s",
+									depth: depth - 1
+								});
+							}
+							case "e": {
+								let doorY = randInt(y + 1, y + h - 2);
+								queue.push({
+									x: x + w - 1,
+									y: doorY,
+									dir: "e",
+									depth: depth - 1
+								});
+							}
+						}
+					}
+				}
+			}
+			
+			//create starter room
+			//it will recursively create rooms from there
+			startRoom(randInt(10, 40), randInt(10, 40), randInt(minS+2, maxS), randInt(minS+2, maxS));
+			
+			//The queue system is in place to avoid accidental direction prioritization
+			for(let i = 0; i < queue.length; i++){
+				extendRoom(queue[i].x, queue[i].y, queue[i].dir, queue[i].depth);
+			}
+			
+			function draw(){
+				ctx.fillStyle = "black";
+				ctx.fillRect(0, 0, 1000, 1000);
+				for(let x = 0; x < map.length; x++){
+					for(let y = 0; y < map[x].length; y++){
+						switch(map[x][y]){
+							default: {
+								ctx.fillStyle = (()=>{
+									switch(map[x][y]){
+										default: return "black";
+										//case "wall":   return "#aaa";
+										//case "door":   return "#641";
+										case "cobble": return "#777";
+										//case "wood":   return "#c83";
+										case "start":  return "#ff0";
+										case "test":   return "#fff";
+									}
+								})();
+								ctx.fillRect(x*s, y*s, s, s);
+								break;
+							}
+							case "wall": {
+								ctx.fillStyle = "#aaa";
+								ctx.fillRect(x*s, y*s, s, s);
+								
+								//Brick lines
+								ctx.strokeStyle = "#888";
+								//Horizontal
+								ctx.beginPath();
+								ctx.moveTo(x*s, y*s+1);
+								ctx.lineTo(x*s+s, y*s+1);
+								ctx.stroke();
+								ctx.beginPath();
+								ctx.moveTo(x*s, y*s+1+s*2/4);
+								ctx.lineTo(x*s+s, y*s+1+s*2/4);
+								ctx.stroke();
+								
+								//Vertical left side
+								ctx.beginPath();
+								ctx.moveTo(x*s+1, y*s);
+								ctx.lineTo(x*s+1, y*s+s*2/4);
+								ctx.stroke();
+								
+								//Vertical middle side
+								ctx.beginPath();
+								ctx.moveTo(x*s+1+s/2, y*s+s*2/4);
+								ctx.lineTo(x*s+1+s/2, y*s+s);
+								ctx.stroke();
+								break;
+							}
+							case "wood": {
+								ctx.fillStyle = "#c83";
+								ctx.fillRect(x*s, y*s, s, s);
+								
+								//Board lines
+								ctx.strokeStyle = "#762";
+								//Horizontal
+								ctx.beginPath();
+								ctx.moveTo(x*s, y*s+1);
+								ctx.lineTo(x*s+s, y*s+1);
+								ctx.stroke();
+								ctx.beginPath();
+								ctx.moveTo(x*s, y*s+1+s/4);
+								ctx.lineTo(x*s+s, y*s+1+s/4);
+								ctx.stroke();
+								ctx.beginPath();
+								ctx.moveTo(x*s, y*s+1+s*2/4);
+								ctx.lineTo(x*s+s, y*s+1+s*2/4);
+								ctx.stroke();
+								ctx.beginPath();
+								ctx.moveTo(x*s, y*s+1+s*3/4);
+								ctx.lineTo(x*s+s, y*s+1+s*3/4);
+								ctx.stroke();
+								
+								//Vertical left side
+								ctx.beginPath();
+								ctx.moveTo(x*s+1, y*s);
+								ctx.lineTo(x*s+1, y*s+s*1/4);
+								ctx.stroke();
+								ctx.beginPath();
+								ctx.moveTo(x*s+1, y*s+s*2/4);
+								ctx.lineTo(x*s+1, y*s+s*3/4);
+								ctx.stroke();
+								
+								//Vertical middle side
+								ctx.beginPath();
+								ctx.moveTo(x*s+1+s/2, y*s+s*1/4);
+								ctx.lineTo(x*s+1+s/2, y*s+s*2/4);
+								ctx.stroke();
+								ctx.beginPath();
+								ctx.moveTo(x*s+1+s/2, y*s+s*3/4);
+								ctx.lineTo(x*s+1+s/2, y*s+s);
+								ctx.stroke();
+								break;
+							}
+							case "door": {
+								ctx.fillStyle = "#641";
+								ctx.fillRect(x*s, y*s, s, s);
+								ctx.fillStyle = "#fc0";
+								ctx.beginPath();
+								ctx.ellipse(x*s + s/4, y*s + s/2, s/8, s/8, 0, 0, Math.PI*2);
+								ctx.fill();
+								break;
+							}
+							case "books": {
+								ctx.fillStyle = "#863";
+								ctx.fillRect(x*s, y*s, s, s);
+								ctx.fillStyle = ["#e53", "#3e5", "#53e"][Math.floor(Math.random() * 3)];
+								ctx.fillRect(x*s+2, y*s+2, s-4, s/2-4);
+								ctx.fillRect(x*s+2, y*s+2 + s/2, s-4, s/2-4);
+								break;
+							}
+						}
+					}
+				}
+			}
+			draw();
+		</script>
+		<script>
+			//
+		</script>
+	</body>
+</html>

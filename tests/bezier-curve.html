@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<title>Bézier Curves</title>
+		<style>
+			body {
+				font-family: sans-serif;
+			}
+			canvas {
+				border: 2px inset #ccc;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Bézier Curves</h1>
+		<p>Bézier curve creation. Use the options to adjust the settings and drag the points to adjust the shape.</p>
+		<hr>
+		<p><label>Power: <var id="power-var">3</var> | 2 <input type="range" min="2" max="10" value="3" id="power"> 10</label></p>
+		<p><label>Steps: min <input type="range" min="3" max="1000" value="100" id="steps"> max</label></p>
+		<p><button id="random">Randomize Positions</button></p>
+		<canvas width="480" height="360"></canvas>
+		<script>
+			const canv = document.querySelector("canvas");
+			const ctx = canv.getContext("2d");
+			const power = document.getElementById("power");
+			const steps = document.getElementById("steps");
+			
+			var positions = [
+				[Math.floor(Math.random() * canv.width), Math.floor(Math.random() * canv.height)],
+				[Math.floor(Math.random() * canv.width), Math.floor(Math.random() * canv.height)],
+				[Math.floor(Math.random() * canv.width), Math.floor(Math.random() * canv.height)],
+				[Math.floor(Math.random() * canv.width), Math.floor(Math.random() * canv.height)]
+			];
+			var mouseDown = false;
+			var activePoint = -1;
+			
+			//https://stackoverflow.com/a/44134328
+			function hslToHex(h, s, l) {
+				l /= 100;
+				const a = s * Math.min(l, 1 - l) / 100;
+				const f = n => {
+					const k = (n + h / 30) % 12;
+					const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+					return Math.round(255 * color).toString(16).padStart(2, '0');   // convert to Hex and prefix "0" if needed
+				};
+				return `#${f(0)}${f(8)}${f(4)}`;
+			}
+			function generateColor(i){
+				return hslToHex(i * 0.618033988749895 * 360, 50, 50);
+			}
+			
+			function draw(){
+				// Example: lerp(0.5, 0.0, 1.0) == 0.5
+				let lerp = (t, p1, p2) => (1 - t) * p1 + t * p2;
+
+				// Example: reduce(0.5, ...[0.0, 1.0, 2.0, 3.0]) == [0.5, 1.5, 2.5]
+				let reduce = (t, p1, p2, ...ps) => ps.length > 0
+					? [lerp(t, p1, p2), ...reduce(t, p2, ...ps)]
+					: [lerp(t, p1, p2)];
+
+				// Example: deCasteljau(0.5, [0.0, 1.0, 2.0, 3.0]) == 1.5
+				let deCasteljau = (t, ps) => ps.length > 1
+					? deCasteljau(t, reduce(t, ...ps))
+					: ps[0];
+				
+				///////////////////////////////////////////////////////////////
+				
+				//Clear screen
+				ctx.clearRect(0, 0, canv.width, canv.height);
+				
+				//Draw lines
+				ctx.strokeStyle = "#ccc";
+				ctx.lineWidth = 2;
+				ctx.lineCap = "round";
+				ctx.lineJoin = "round";
+				ctx.beginPath();
+				for(let i = 0; i < positions.length; i++){
+					let x = positions[i][0];
+					let y = positions[i][1];
+					
+					if(i === 0)
+						ctx.moveTo(x, y);
+					else
+						ctx.lineTo(x, y);
+				}
+				ctx.stroke();
+				
+				//Draw colored points and labels
+				ctx.font = "12px sans-serif";
+				for(let i = 0; i < positions.length; i++){
+					if(activePoint === i){
+						ctx.fillStyle = "#999";
+						ctx.beginPath();
+						ctx.arc(positions[i][0], positions[i][1], 8, 0, Math.PI * 2);
+						ctx.fill();
+					}
+					
+					let rightSide = positions[i][0] < canv.width / 2;
+					ctx.fillStyle = generateColor(i);
+					ctx.beginPath();
+					ctx.arc(positions[i][0], positions[i][1], 6, 0, Math.PI * 2);
+					ctx.fill();
+					
+					if(rightSide)
+						ctx.textAlign = "left";
+					else
+						ctx.textAlign = "right";
+					ctx.fillText("P" + i, positions[i][0] + (rightSide ? 12 : -12), positions[i][1]);
+				}
+				
+				//Draw the curve itself
+				ctx.strokeStyle = "black";
+				ctx.lineWidth = 4;
+				ctx.lineCap = "round";
+				ctx.lineJoin = "miter";
+				ctx.beginPath();
+				for(let t = 0, i = 0; i <= steps.value; i++, t = 1 / Number(steps.value) * i){
+					let x = deCasteljau(t, [...(() => {
+						let arr = [];
+						for(let j = 0; j < positions.length; j++)
+							arr.push(positions[j][0]);
+						return arr;
+					})()]);
+					let y = deCasteljau(t, [...(() => {
+						let arr = [];
+						for(let j = 0; j < positions.length; j++)
+							arr.push(positions[j][1]);
+						return arr;
+					})()]);
+					
+					if(i === 0)
+						ctx.moveTo(x, y);
+					else
+						ctx.lineTo(x, y);
+				}
+				ctx.stroke();
+			}
+			draw();
+			
+			document.getElementById("random").onclick = function(){
+				//Randomize
+				positions = [];
+				for(let i = 0; i <= Number(power.value); i++){
+					positions.push([Math.floor(Math.random() * canv.width), Math.floor(Math.random() * canv.height)]);
+				}
+				draw();
+			}
+			
+			power.oninput = function(){
+				//Change power
+				document.getElementById("power-var").innerText = this.value;
+				while(positions.length !== Number(this.value) + 1){
+					if(Number(this.value) >= positions.length){
+						positions.push([Math.floor(Math.random() * canv.width), Math.floor(Math.random() * canv.height)]);
+					} else {
+						positions.pop();
+					}
+				}
+				draw();
+			}
+			steps.oninput = draw;
+			
+			//Meeska mooska mickey MOUSE controls
+			canv.onmousedown = function(e){
+				for(let i = 0; i < positions.length; i++){
+					if(Math.sqrt(Math.pow(e.offsetX - positions[i][0], 2) + Math.pow(e.offsetY - positions[i][1], 2)) < 6){
+						mouseDown = true;
+						activePoint = i;
+						draw();
+						canv.style.cursor = "grabbing";
+						break;
+					}
+				}
+			}
+			canv.onmousemove = function(e){
+				if(mouseDown){
+					positions[activePoint][0] = e.offsetX;
+					positions[activePoint][1] = e.offsetY;
+					draw();
+				} else {
+					let foundDot = false;
+					for(let i = 0; i < positions.length; i++){
+						if(Math.sqrt(Math.pow(e.offsetX - positions[i][0], 2) + Math.pow(e.offsetY - positions[i][1], 2)) < 6){
+							canv.style.cursor = "grab";
+							foundDot = true;
+							break;
+						}
+					}
+					if(!foundDot){
+						canv.style.cursor = "";
+					}
+				}
+			}
+			document.body.onmouseup = function(){
+				if(mouseDown){
+					canv.style.cursor = "grab";
+					mouseDown = false;
+					activePoint = -1;
+					draw();
+				}
+			}
+		</script>
+	</body>
+</html>

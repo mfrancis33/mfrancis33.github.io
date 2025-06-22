@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<title>Word Search Creator</title>
+		<style>
+			body {
+				font-family: sans-serif;
+				margin-bottom: 1em;
+			}
+			
+			button, select, input, textarea {
+				border: 1px solid currentColor;
+				border-radius: 4pt;
+				padding: 4pt;
+			}
+			button {
+				cursor: pointer;
+			}
+			
+			textarea {
+				width: 64ch;
+				max-width: 80vw;
+				height: 10em;
+				resize: vertical;
+			}
+			h4 {
+				margin-block: 1em;
+			}
+			fieldset {
+				border-radius: 4px;
+				margin-bottom: 1em;
+			}
+			legend {
+				text-decoration: underline;
+			}
+			
+			#overlay {
+				pointer-events: none;
+				user-select: none;
+				position: fixed;
+				top: 0;
+				left: 0;
+				background-color: #ccc;
+				width: 100vw;
+				height: 100vh;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				opacity: 0;
+				transition: opacity 0.4s ease;
+				font-weight: bold;
+				font-size: larger;
+			}
+			#overlay.active {
+				pointer-events: default;
+				opacity: 1;
+			}
+			
+			#solutions:checked ~ * .solution {
+				background-color: yellow;
+			}
+			
+			@media (prefers-color-scheme: dark) {
+				body {
+					background-color: black;
+					color: white;
+				}
+				button, select, input, textarea {
+					background-color: #343434;
+					color: inherit;
+				}
+				#overlay {
+					background-color: #333;
+				}
+				#solutions:checked ~ * .solution {
+					background-color: darkgoldenrod;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Word Search Creator</h1>
+		<p>Create a custom word search. NOTE: with large boards and/or lots of words, the amount of time it takes to create a board is greatly increased.</p>
+		<p>If it can't create a board because it can't find a good configuration, try again a few times or increase the number of tries. If that doesn't work, change settings.</p>
+		<form id="settings">
+			<h4>Words</h4>
+			<p><label for="words">Enter UNIQUE words (separate words with new lines, each should be at lest 3 letters long)</label></p>
+			<p><textarea id="words"></textarea></p>
+			<h4>Misc Settings</h4>
+			<fieldset>
+				<legend>General</legend>
+				<p><label>Word search title: <input type="text" name="title" placeholder="Enter title"></label></p>
+				<p><label>Allowed attempts to create word search: <input type="number" name="tries" min="10" max="10000" value="100" step="10"></label></p>
+			</fieldset>
+			<fieldset>
+				<legend>Size</legend>
+				<p>
+					<label>Width: <input type="number" name="width" min="6" value="20"></label>
+					<br>
+					<label>Height: <input type="number" name="height" min="6" value="20"></label>
+				</p>
+				<p><button id="optimize" type="button">Attempt to find optimal square</button></p>
+			</fieldset>
+			<fieldset>
+				<legend>Word rules</legend>
+				<p><label><input type="checkbox" name="intersections" checked> Allow intersections</label></p>
+				<p><label><input type="checkbox" name="backwards" checked> Allow backwards words</label></p>
+				<p><label><input type="checkbox" name="diagonals" checked> Allow diagonals</label></p>
+			</fieldset>
+			<fieldset>
+				<legend>Letters</legend>
+				<p><label>Letter usage: <select name="letterUsage">
+					<option value="all" selected>Use all letters</option>
+					<option value="words">Use only letters in words</option>
+				</select></label></p>
+				<p><label><input type="checkbox" name="letterWeights" checked> Use weighted letters</label></p>
+				<p><label>Allowed extra symbols (which won't be removed for words): <input type="text" name="symbols" placeholder="Enter symbols to include"></label></p>
+			</fieldset>
+			<h4>Submit</h4>
+			<p><button id="submit" type="submit">Generate</button></p>
+		</form>
+		<h3>Step 2: Output</h3>
+		<input type="checkbox" id="solutions"><label for="solutions"> Show word locations</label>
+		<p></p>
+		<div id="output"></div>
+		<div id="overlay">
+			<p>Creating...</p>
+		</div>
+		<script>
+			const out = document.getElementById("output");
+			const overlay = document.getElementById("overlay");
+			var DEBUG = false;
+
+			function checkForIssues(words, width, height) {
+				if(words.length == 0) {
+					alert("ERROR: no valid words in word list!");
+					return true;
+				}
+				if(words.some(s => s.length > width || s.length > height)) {
+					alert("ERROR: a word was found to be too big for the given dimensions. Increase either the width or the height.");
+					return true;
+				}
+				if(words.some(s => s.length < 3)) {
+					alert("ERROR: a word was found to have too few letters.");
+					return true;
+				}
+				if(words.reduce((sum, str) => sum + str.length, 0) >= width * height) {
+					alert("ERROR: too few characters on board! Expand width and height to account for amount of letters in all words.");
+					return true;
+				}
+				return false;
+			}
+
+			document.getElementById("optimize").onclick = function() {
+				// Get variables
+				const form = document.forms.settings.elements;
+				
+				// Get words from input
+				const wordSplitRegExp = new RegExp("[^A-Za-zÀ-ÖØ-öø-ÿ" + escapeRegExp(form.symbols.value) + "]+", "gu");
+				const wordListRaw = form.words.value.split(/\r\n|\r|\n/);
+				const words = [...new Set( // wrap in set to remove duplicate strings
+					wordListRaw
+						.map(s => s.split(wordSplitRegExp).join("").toUpperCase())
+						.filter(s => s.length > 0)
+				)];
+				
+				// Check for potential issues (with max integer for width and height so we don't run into any issues)
+				if(checkForIssues(words, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER)) {
+					return;
+				}
+				
+				// Calculate a potential square where ~1/2 of the space is filled with letters (number is arbitrary guesstimation but it works)
+				const potentialArea = words.reduce((a, s) => a + s.length, 0) * 2;
+				
+				// Side length is larger of potential square side length and maximum word length
+				const sideLength = Math.max(
+					Math.ceil(Math.sqrt(potentialArea)),
+					words.reduce((a, s) => Math.max(a, s.length), 0)
+				);
+				
+				// Update values
+				form.width.value = sideLength;
+				form.height.value = sideLength;
+			}
+			document.getElementById("optimize").onkeyup = function(e) {
+				if(e.key === "Enter") {
+					e.stopPropagation();
+					this.click();
+				}
+			}
+			
+			// The entire thing I put in this stupidly long event handler. Don't ask why I make terrible decisions.
+			// Also, this thing has only the most incredible complexity possible:
+			// 5 nested loops just to place the words, another 5 to place extra letters and check for duplicates.
+			document.forms.settings.onsubmit = async function(e){
+				e.preventDefault();
+				
+				// Get width and height
+				const width = Number(this.width.value);
+				const height = Number(this.height.value);
+				const tries = Number(this.tries.value);
+				const title = this.title.value;
+				
+				// Get words from input
+				const wordSplitRegExp = new RegExp("[^A-Za-zÀ-ÖØ-öø-ÿ" + escapeRegExp(this.symbols.value) + "]+", "gu");
+				let wordListRaw = this.words.value.split(/\r|\n|\r\n/);
+				const words = [...new Set( // wrap in set to remove duplicate strings
+					wordListRaw
+						.map(s => s.split(wordSplitRegExp).join("").toUpperCase())
+						.filter(s => s.length > 0)
+						.sort((a, b) => b.length - a.length)
+				)];
+				
+				// Error check
+				if(checkForIssues(words, width, height)) {
+					return;
+				}
+				
+				// Filter original word list to see which words survived (used later)
+				wordListRaw = wordListRaw
+					.filter(s => words.indexOf(s.split(wordSplitRegExp).join("").toUpperCase()) > -1)
+					.map(s => s.toUpperCase());
+				
+				// Try specified # of times to create a word search
+				let grid;
+				let success = false;
+				
+				overlay.innerText = "Creating...";
+				overlay.classList.add("active");
+				await wait(500);
+
+				const directionsSource = ["e", "s"];
+				if(this.diagonals.checked) {
+					if(this.backwards.checked) {
+						directionsSource.push("ne");
+						directionsSource.push("nw");
+					}
+					directionsSource.push("se");
+					directionsSource.push("sw");
+				}
+				if(this.backwards.checked) {
+					directionsSource.push("n");
+					directionsSource.push("w");
+				}
+				
+				out.innerHTML = "";
+				if(DEBUG) console.log("Words");
+				for(let attempt = 1; attempt <= tries; attempt++) {
+					if(DEBUG) console.log("Attempt", attempt);
+					overlay.innerText = "Placing words... (attempt " + attempt + "/" + tries + ")";
+					await wait(50);
+					
+					grid = new Array(height);
+					for(let i = 0; i < grid.length; i++) grid[i] = new Array(width);
+					
+					let wordsPlaced = 0;
+					for(const word of words) {
+						const directions = directionsSource.slice();
+						
+						let needToPlace = true;
+						
+						// Try all directions
+						while(needToPlace && directions.length > 0) {
+							// Get random direction
+							const direction = directions.splice(Math.floor(Math.random() * directions.length), 1)[0];
+							
+							// Check for all potential spaces we can start the word
+							const availableSpaces = (() => {
+								let spaces = [];
+								switch(direction) {
+									case "n": {
+										const range = word.length + 1;
+										for(let y = range; y < height; y++) {
+											for(let x = 0; x < width; x++) {
+												spaces.push([x, y]);
+											}
+										}
+										break;
+									}
+									case "ne": {
+										const range = word.length + 1;
+										for(let y = range; y < height; y++) {
+											for(let x = 0; x < width - range; x++) {
+												spaces.push([x, y]);
+											}
+										}
+										break;
+									}
+									case "e": {
+										const range = width - word.length + 1;
+										for(let x = 0; x < range; x++) {
+											for(let y = 0; y < height; y++) {
+												spaces.push([x, y]);
+											}
+										}
+										break;
+									}
+									case "se": {
+										const range = Math.min(width, height) - word.length + 1;
+										for(let x = 0; x < range; x++) {
+											for(let y = 0; y < range; y++) {
+												spaces.push([x, y]);
+											}
+										}
+										break;
+									}
+									case "s": {
+										const range = height - word.length + 1;
+										for(let x = 0; x < width; x++) {
+											for(let y = 0; y < range; y++) {
+												spaces.push([x, y]);
+											}
+										}
+										break;
+									}
+									case "sw": {
+										const range = word.length + 1;
+										for(let x = range; x < width; x++) {
+											for(let y = 0; y < height - range; y++) {
+												spaces.push([x, y]);
+											}
+										}
+										break;
+									}
+									case "w": {
+										const range = word.length + 1;
+										for(let x = range; x < width; x++) {
+											for(let y = 0; y < height; y++) {
+												spaces.push([x, y]);
+											}
+										}
+										break;
+									}
+									case "nw": {
+										const range = word.length + 1;
+										for(let x = range; x < width; x++) {
+											for(let y = range; y < height; y++) {
+												spaces.push([x, y]);
+											}
+										}
+										break;
+									}
+								}
+								return spaces;
+							})();
+							
+							// Get rid of spaces that are already taken
+							const spacesCopy = availableSpaces.slice();
+							for(let i = spacesCopy.length - 1; i >= 0; i--) {
+								const coord = availableSpaces[i];
+								if(grid[coord[1]][coord[0]] != undefined && grid[coord[1]][coord[0]] != word[0]) {
+									availableSpaces.splice(i, 1);
+								}
+							}
+							
+							// If there are no available spaces, continue to the next one.
+							if(availableSpaces.length == 0) {
+								continue;
+							}
+							
+							// Go through all spaces until we've placed the word
+							const l = availableSpaces.length;
+							for(let c = 0; c < l; c++) {
+								const coord = availableSpaces.splice(Math.floor(Math.random() * availableSpaces.length), 1)[0];
+								// Save original coordinates
+								const origX = coord[0];
+								const origY = coord[1];
+								
+								// Check to make sure we can place the letters
+								let error = false;
+								for(let i = 0; i < word.length; i++) {
+									// Get current position
+									let pos;
+									switch(direction) {
+										case "n":
+											pos = [origX, origY - i];
+											break;
+										case "ne":
+											pos = [origX + i, origY - i];
+											break;
+										case "e":
+											pos = [origX + i, origY];
+											break;
+										case "se":
+											pos = [origX + i, origY + i];
+											break;
+										case "s":
+											pos = [origX, origY + i];
+											break;
+										case "sw":
+											pos = [origX - i, origY + i];
+											break;
+										case "w":
+											pos = [origX - i, origY];
+											break;
+										case "nw":
+											pos = [origX - i, origY - i];
+											break;
+									}
+									
+									// Check to make sure we're not intersecting with a word that uses different letters
+									if(grid[pos[1]][pos[0]] != undefined && grid[pos[1]][pos[0]] != word[i]) {
+										error = true;
+										break;
+									}
+									// If intersections is unchecked, make sure we're not colliding with another word
+									else if(!this.intersections.checked && grid[pos[1]][pos[0]] == word[i]) {
+										error = true;
+										break;
+									}
+								}
+								
+								// Actually place stuff now
+								if(!error) {
+									needToPlace = false;
+									for(let i = 0; i < word.length; i++) {
+										// Get current position
+										let pos;
+										switch(direction) {
+											case "n":
+												pos = [origX, origY - i];
+												break;
+											case "ne":
+												pos = [origX + i, origY - i];
+												break;
+											case "e":
+												pos = [origX + i, origY];
+												break;
+											case "se":
+												pos = [origX + i, origY + i];
+												break;
+											case "s":
+												pos = [origX, origY + i];
+												break;
+											case "sw":
+												pos = [origX - i, origY + i];
+												break;
+											case "w":
+												pos = [origX - i, origY];
+												break;
+											case "nw":
+												pos = [origX - i, origY - i];
+												break;
+										}
+										
+										grid[pos[1]][pos[0]] = word[i];
+									}
+									break;
+								}
+							} // available space loop
+						} // direction loop
+						if(!needToPlace) {
+							wordsPlaced++;
+						}
+					} // word loop
+					
+					if(wordsPlaced == words.length) {
+						success = true;
+						break;
+					}
+				}
+				
+				// Check if we were unsuccessful
+				if(!success) {
+					alert("Unsuccessful! Could not find a combination in which all words fit.");
+					overlay.classList.remove("active");
+					return;
+				}
+				
+				
+				// Reverse words array (in-place) because it's necessary for the next part
+				// We need the array in smallest-biggest because of duplicate word removal
+				for(let i = 0; i < words.length; i++) {
+					words.push(words.shift());
+				}
+				
+				// Fill blank spaces with letters
+				const availableLetters = (() => {
+					let letters = new Map();
+					// If all letters allowed, put all letters
+					if(this.elements.letterUsage.value == "all") {
+						letters = new Map(
+							[
+								["A", 1], ["B", 1], ["C", 1], ["D", 1], ["E", 1], ["F", 1], ["G", 1], ["H", 1], ["I", 1], ["J", 1], ["K", 1], ["L", 1], ["M", 1],
+								["N", 1], ["O", 1], ["P", 1], ["Q", 1], ["R", 1], ["S", 1], ["T", 1], ["U", 1], ["V", 1], ["W", 1], ["X", 1], ["Y", 1], ["Z", 1]
+							]
+						);
+					}
+					
+					// Get special symbols and add those (should be weighted if they appear more than once)
+					for(const letter of this.elements.symbols.value.toUpperCase()) {
+						letters.set(letter, (letters.get(letter) || 0) + 1);
+					}
+					
+					// Weight the letters in the Map by how often they appear on the board
+					for(let i = 0; i < grid.length; i++) {
+						for(let j = 0; j < grid[i].length; j++) {
+							if(grid[i][j] != undefined) {
+								letters.set(grid[i][j], (letters.get(grid[i][j]) || 0) + 1)
+							}
+						}
+					}
+					
+					// Transform into an array
+					let weightedLetters = [];
+					letters.forEach((value, key) => {
+						for(let i = 0; i < value; i++) {
+							weightedLetters.push(key);
+						}
+					});
+					
+					// If unweighted letters, unweight all the letters
+					if(!this.elements.letterWeights.checked) {
+						weightedLetters = [...new Set(weightedLetters)];
+					}
+					
+					// Return
+					return weightedLetters;
+				})();
+				
+				const unfilledGrid = JSON.parse(JSON.stringify(grid));
+				
+				if(DEBUG) console.log("Filler");
+				for(let attempt = 1; attempt <= tries; attempt++) {
+					if(DEBUG) console.log("Attempt", attempt);
+					
+					overlay.innerText = "Filling with extra letters... (attempt " + attempt + "/" + tries + ")";
+					await wait(50);
+					
+					success = true;
+					//grid = JSON.parse(oldGrid);
+					
+					// Fill empty spaces with random letters
+					for(let y = 0; y < grid.length; y++) {
+						for(let x = 0; x < grid[y].length; x++) {
+							if(typeof grid[y][x] !== "string"){
+								if(typeof unfilledGrid[y][x] === "string"){
+									grid[y][x] = unfilledGrid[y][x];
+								} else {
+									grid[y][x] = availableLetters[Math.floor(Math.random() * availableLetters.length)];
+								}
+								//if(DEBUG && attempt > 1) console.log(grid[y][x]);
+							}
+						}
+					}
+					
+					// Search for duplicate words and remove them (assuming their letters aren't required)
+					// If there letters are required and they can't be removed, it will error out anyway.
+					for(const word of words) {
+						//if(!success) break;
+						
+						// Visit every grid cell for every word
+						for(let y = 0; y < grid.length; y++) {
+							for(let x = 0; x < grid[y].length; x++) {
+								// N
+								if(checkWordInDirection(x, y, grid, word, "n")){
+									for(let i = 0; i < word.length; i++) {
+										if(typeof unfilledGrid[y-i][x] !== "string") {
+											grid[y-i][x] = undefined;
+											if(DEBUG && success) console.log(word);
+											success = false;
+										}
+									}
+								}
+								
+								// NE
+								if(checkWordInDirection(x, y, grid, word, "ne")){
+									for(let i = 0; i < word.length; i++) {
+										if(typeof unfilledGrid[y-i][x+i] !== "string") {
+											grid[y-i][x+i] = undefined;
+											if(DEBUG && success) console.log(word);
+											success = false;
+										}
+									}
+								}
+								
+								// E
+								if(checkWordInDirection(x, y, grid, word, "e")){
+									for(let i = 0; i < word.length; i++) {
+										if(typeof unfilledGrid[y][x+i] !== "string") {
+											grid[y][x+i] = undefined;
+											if(DEBUG && success) console.log(word);
+											success = false;
+										}
+									}
+								}
+								
+								// SE
+								if(checkWordInDirection(x, y, grid, word, "se")){
+									for(let i = 0; i < word.length; i++) {
+										if(typeof unfilledGrid[y+i][x+i] !== "string") {
+											grid[y+i][x+i] = undefined;
+											if(DEBUG && success) console.log(word);
+											success = false;
+										}
+									}
+								}
+								
+								// S
+								if(checkWordInDirection(x, y, grid, word, "s")){
+									for(let i = 0; i < word.length; i++) {
+										if(typeof unfilledGrid[y+i][x] !== "string") {
+											grid[y+i][x] = undefined;
+											if(DEBUG && success) console.log(word);
+											success = false;
+										}
+									}
+								}
+								
+								// SW
+								if(checkWordInDirection(x, y, grid, word, "sw")){
+									for(let i = 0; i < word.length; i++) {
+										if(typeof unfilledGrid[y+i][x-i] !== "string") {
+											grid[y+i][x-i] = undefined;
+											if(DEBUG && success) console.log(word);
+											success = false;
+										}
+									}
+								}
+								
+								// W
+								if(checkWordInDirection(x, y, grid, word, "w")){
+									for(let i = 0; i < word.length; i++) {
+										if(typeof unfilledGrid[y][x-i] !== "string") {
+											grid[y][x-i] = undefined;
+											if(DEBUG && success) console.log(word);
+											success = false;
+										}
+									}
+								}
+								
+								// NW
+								if(checkWordInDirection(x, y, grid, word, "nw")){
+									for(let i = 0; i < word.length; i++) {
+										if(typeof unfilledGrid[y-i][x-i] !== "string") {
+											grid[y-i][x-i] = undefined;
+											if(DEBUG && success) console.log(word);
+											success = false;
+										}
+									}
+								}
+							} // x loop
+						} // y loop
+					} // word loop
+					
+					if(success) break;
+				} // attempt loop
+				
+				if(!success) {
+					alert("Unsuccessful! Could not find a combination of filler letters where no duplicate words were found.");
+					overlay.classList.remove("active");
+					return;
+				}
+				
+				overlay.innerText = "Done!";
+				overlay.classList.remove("active");
+				
+				// Print output
+				if(title !== "") out.appendChild(document.createElement("h2")).innerText = title;
+				const table = out.appendChild(document.createElement("table"));
+				table.style.fontFamily = "monospace";
+				table.style.borderCollapse = "collapse";
+				table.border = "1";
+				const tbody = table.appendChild(document.createElement("tbody"));
+				
+				for(let i = 0; i < grid.length; i++) {
+					const tr = tbody.appendChild(document.createElement("tr"));
+					for(let j = 0; j < grid[i].length; j++) {
+						const td = tr.appendChild(document.createElement("td"));
+						td.innerText = grid[i][j] || "\xa0";
+						td.style.width = "1em";
+						td.style.padding = "0.5ch";
+						td.style.textAlign = "center";
+						
+						if(typeof unfilledGrid[i][j] === "string") {
+							td.classList.add("solution");
+						}
+					}
+				}
+				
+				// Print surviving words
+				const cols = Math.round(Math.sqrt(wordListRaw.length));
+				const wordTable = out.appendChild(document.createElement("table"));
+				wordTable.style.fontFamily = "monospace"; // Actual table isn't monospace, this is just a spacing hack I made up
+				wordTable.style.minWidth = "calc(" + width + "em + " + width + "ch + " + width + "px)";
+				wordTable.style.textAlign = "center";
+				const wordTbody = wordTable.appendChild(document.createElement("tbody"));
+				wordTbody.style.fontFamily = "sans-serif";
+				let counter = 0;
+				for(const word of wordListRaw) {
+					if(counter == 0) wordTbody.appendChild(document.createElement("tr"));
+					wordTbody.children[wordTbody.childElementCount - 1].appendChild(document.createElement("td")).innerText = word;
+					counter++;
+					counter %= cols;
+				}
+				
+				// Add button for actually printing
+				out.appendChild(document.createElement("h3")).innerText = "Step 3: Export";
+				
+				const button1 = out.appendChild(document.createElement("p")).appendChild(document.createElement("button"));
+				button1.innerText = "Print output"
+				button1.onclick = () => {openNewTab(wordListRaw.sort(), title);};
+				
+				//const button2 = out.appendChild(document.createElement("p")).appendChild(document.createElement("button"));
+				//button2.innerText = "Download as PNG";
+				//button2.onclick = () => {exportPNG(wordListRaw.sort(), title);};
+				
+				// DEBUG
+				let s = "";
+				for(let i = 0; i < grid.length; i++) {
+					for(let j = 0; j < grid[i].length; j++) {
+						s += grid[i][j];
+					}
+					s += "\n";
+				}
+				console.log(s);
+			}
+			
+			// Returns true if the word was found.
+			function checkWordInDirection(x, y, letters, word, dir){
+				if(word.length == 0) return false;
+				const w = letters[0].length - 1;
+				const h = letters.length - 1;
+				if(x < 0 || x > w || y < 0 || y > h) return false;
+				switch(dir){
+					default:
+						throw "Invalid direction!";
+					case "n":
+						for(let i = 0; i < word.length; i++){
+							if(y - i < 0) return false;
+							if(letters[y-i][x] !== word[i])
+								return false;
+						}
+						break;
+					case "ne":
+						for(let i = 0; i < word.length; i++){
+							if(y - i < 0 || x + i > w) return false;
+							if(letters[y-i][x+i] !== word[i])
+								return false;
+						}
+						break;
+					case "e":
+						for(let i = 0; i < word.length; i++){
+							if(x + i > w) return false;
+							if(letters[y][x+i] !== word[i])
+								return false;
+						}
+						break;
+					case "se":
+						for(let i = 0; i < word.length; i++){
+							if(y + i > h || x + i > w) return false;
+							if(letters[y+i][x+i] !== word[i])
+								return false;
+						}
+						break;
+					case "s":
+						for(let i = 0; i < word.length; i++){
+							if(y + i > h) return false;
+							if(letters[y+i][x] !== word[i])
+								return false;
+						}
+						break;
+					case "sw":
+						for(let i = 0; i < word.length; i++){
+							if(y + i > h || x - i < 0) return false;
+							if(letters[y+i][x-i] !== word[i])
+								return false;
+						}
+						break;
+					case "w":
+						for(let i = 0; i < word.length; i++){
+							if(x - i < 0) return false;
+							if(letters[y][x-i] !== word[i])
+								return false;
+						}
+						break;
+					case "nw":
+						for(let i = 0; i < word.length; i++){
+							if(y - i < 0 || x - i < 0) return false;
+							if(letters[y-i][x-i] !== word[i])
+								return false;
+						}
+						break;
+				}
+				return true;
+			}
+			
+			function wait(ms) {
+				return new Promise(res => {
+					setTimeout(res, ms);
+				});
+			}
+			
+			function openNewTab(wordList, title) {
+				// Set up variables and tab
+				const width = out.querySelector("tr").childElementCount;
+				const height = out.querySelector("tbody").childElementCount;
+				const tab = window.open("", "_blank");
+				
+				const maxWidthIn = 10;
+				const maxHeightIn = 8;
+				
+				const maxWidth = maxWidthIn * 96; // in * 96 = px
+				const maxHeight = maxHeightIn * 96;
+				
+				const fontSize = (() => {
+					let ratio = width / height;
+					if(maxHeight / ratio < maxWidth) {
+						return (maxHeight / height) / 2;
+					} else {
+						return (maxWidth / width * ratio) / 2;
+					}
+				})();
+				
+				const cols = Math.round((Math.sqrt(wordList.length) + Math.cbrt(wordList.length)) / 2);
+				const wordsFontSize = 48 / Math.cbrt(wordList.length);
+				
+				// Set styling
+				tab.document.head.appendChild(document.createElement("style")).innerHTML = `
+					html {
+						background-color: #ccc;
+					}
+					body {
+						font-family: sans-serif;
+						text-align: center;
+						min-height: 11in;
+						width: 8.5in;
+						margin: 0.25in;
+						padding: 0.25in;
+						background-color: white;
+						box-shadow: 0 0.5em 1em black;
+						display: flex;
+						/*justify-content: center;*/
+						flex-direction: column;
+					}
+					h1 {
+						margin-top: 0;
+						margin-bottom: 0.5em;
+					}
+					#grid {
+						border: 1px solid #ccc;
+						aspect-ratio: ${width} / ${height};
+						max-width: calc(${maxWidthIn}in + 1em);
+						max-height: calc(${maxHeightIn}in + 1em);
+						padding: 0.25em;
+						font-size: ${fontSize}px;
+						display: grid;
+						grid-template-columns: repeat(${width}, 1fr);
+						grid-template-rows: repeat(${height}, 1fr);
+						align-items: center;
+					}
+					#grid * {
+						margin: 0;
+					}
+					#table {
+						font-size: ${wordsFontSize}px;
+						columns: ${cols};
+						width: 100%;
+						margin-top: 1em;
+					}
+					#table * {
+						margin: 0;
+						padding: 0.25em 0;
+					}
+					@media print {
+						html {
+							background-color: white;
+						}
+						body {
+							margin: 0;
+							box-shadow: none;
+						}
+					}
+				`;
+				
+				// Create title
+				if(title !== "") {
+					let h1 = tab.document.body.appendChild(document.createElement("h1"));
+					h1.innerText = title;
+				}
+				
+				// Create letter grid
+				let grid = tab.document.body.appendChild(document.createElement("div"));
+				grid.id = "grid";
+				let oldTable = out.querySelector("tbody");
+				for(let i = 0; i < height; i++) {
+					for(let j = 0; j < width; j++) {
+						tab.grid.appendChild(document.createElement("p")).innerText = oldTable.children[i].children[j].innerText;
+					}
+				}
+				
+				// Create word list
+				let table = tab.document.body.appendChild(document.createElement("div"));
+				table.id = "table";
+				for(const word of wordList) {
+					table.appendChild(document.createElement("p")).innerText = word;
+				}
+				
+				// Focus tab and print
+				tab.focus();
+				tab.print();
+			}
+			
+			function exportPNG(wordList, title) {
+				// Set up variables and tab
+				const gridWidth = out.querySelector("tr").childElementCount;
+				const gridHeight = out.querySelector("tbody").childElementCount;
+				const gridRatio = gridWidth / gridHeight;
+				
+				const canv = document.createElement("canvas");
+				const ctx = canv.getContext("2d");
+				
+				let canvWidth = 40 * gridWidth + 40;
+				let canvHeight = 40 * gridHeight + 40 + (title !== "" ? 40 : 0);
+				
+				const keyCols = Math.round((Math.sqrt(wordList.length) + Math.cbrt(wordList.length)) / 2);
+				const keyColWidth = (() => {
+					if(gridRatio < 1){
+						// Height bigger than width, key will be to right of grid
+						ctx.font = "32px Arial, Helvectia, sans-serif";
+						let maxWidth = 0;
+						for(const word of wordList) {
+							maxWidth = Math.max(maxWidth, ctx.measureText(word).width);
+						}
+						// Weird ratio conversions
+						return Math.min(
+							// Fit evenly between columns that add up no larger than twice the grid width
+							(canvWidth * 2 / keyCols),
+							// Cap font size at 16
+							maxWidth,
+							// In the event that the text is small enough that it doesn't fit between twice the grid width (e.g. lots of words)
+							16 / (gridHeight / (wordList.length / keyCols)) * maxWidth
+						) - 16 * (keyCols - 0.5);
+					} else {
+						// Width bigger or equal to height, key will be below grid
+						return 40 * gridWidth / keyCols - 16 * (keyCols - 0.5);
+					}
+				})();
+				const keyFontSize = (() => {
+					ctx.font = "16px Arial, Helvectia, sans-serif";
+					let maxWidth = 0;
+					for(const word of wordList) {
+						maxWidth = Math.max(maxWidth, ctx.measureText(word).width);
+					}
+					// Ratio conversion of max width to height that will fit between columns
+					return keyColWidth * (16 / maxWidth);
+				})();
+				
+				// Calculate how big the canvas should be
+				if(gridRatio < 1) {
+					// Height bigger than width, place key to side of grid
+					canvWidth += keyCols * (keyColWidth + 16);
+				} else {
+					// Square or width bigger than height, place key on bottom
+					canvHeight += Math.ceil((keyFontSize + 16) * Math.ceil(wordList.length / keyCols));
+				}
+				
+				canv.width = canvWidth;
+				canv.height = canvHeight;
+				ctx.fillStyle = "white";
+				ctx.fillRect(0, 0, canv.width, canv.height);
+				
+				// Set up some basic styling
+				ctx.textAlign = "center";
+				ctx.textBaseline = "middle";
+				
+				// Create the title
+				ctx.fillStyle = "black";
+				if(title !== "") {
+					ctx.font = "bold 52px Arial, Helvectia, sans-serif";
+					ctx.fillText(title, canv.width / 2, 30);
+				}
+				
+				// Create the grid
+				ctx.strokeStyle = "#ccc";
+				ctx.lineWidth = 2;
+				ctx.strokeRect(20, 20 + (title !== "" ? 40 : 0), 40 * gridWidth, 40 * gridHeight);
+				let oldTable = out.querySelector("tbody");
+				// Modified version of several online CSS font-family styles for monospace elements
+				ctx.font = "32px Consolas, Menlo, Lucida Console, Liberation Mono, Courier New, monospace, sans-serif";
+				for(let y = 0; y < gridHeight; y++) {
+					for(let x = 0; x < gridWidth; x++) {
+						ctx.fillText(oldTable.children[y].children[x].innerText, Math.round(40 * (x + 0.5) + 20), Math.round(40 * (y + 0.5) + 20 + (title !== "" ? 40 : 0)));
+					}
+				}
+				
+				// Create the word list
+				let colCounter = 0;
+				let rowCounter = 0;
+				const reset = Math.round(wordList.length / keyCols);
+				ctx.font = Math.round(keyFontSize) + "px Arial, Helvectia, sans-serif";
+				for(const word of wordList) {
+					let xOff = 40;
+					let yOff = 40 + (title !== "" ? 40 : 0);
+					if(gridRatio < 1) {
+						// On right
+						xOff += 40 * gridWidth;
+					} else {
+						// On bottom
+						yOff += 40 * gridHeight;
+					}
+					ctx.fillText(word, Math.round((keyColWidth + 16) * (colCounter + 0.5) + xOff), Math.round((keyFontSize + 16) * (rowCounter + 0.5) + yOff));
+					
+					rowCounter++;
+					rowCounter %= reset;
+					if(rowCounter == 0) {
+						colCounter++;
+					}
+				}
+				
+				canv.toBlob(blob => {
+					const tab = window.open("", "_blank");
+					tab.document.body.style.backgroundColor = "#121212";
+					tab.document.body.style.display = "flex";
+					tab.document.body.style.justifyContent = "center";
+					tab.document.body.style.margin = "1em";
+					
+					const url = URL.createObjectURL(blob);
+					
+					const img = tab.document.body.appendChild(document.createElement("img"));
+					img.onload = function(){
+						URL.revokeObjectURL(url);
+					};
+					img.src = url;
+				});
+			}
+			
+			// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions#escaping (MDN releases code under CC0 public domain)
+			function escapeRegExp(string) {
+				return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+			}
+		</script>
+	</body>
+</html>

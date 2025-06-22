@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Balls</title>
+		<style>
+			body {
+				background-color: black;
+				margin: 0;
+				width: 100vw;
+				height: 100vh;
+				overflow: hidden;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+			canvas {
+				box-shadow: inset 0 0 1ch #fff6;
+			}
+		</style>
+	</head>
+	<body>
+		<canvas></canvas>
+		<script>
+			const canv = document.querySelector("canvas");
+			const ctx = canv.getContext("2d");
+
+			// NOTE: a lot of things in this code range from 0-1 for simplicity. Involves more math translating but oh well.
+
+			class Velocity {
+				constructor(vx, vy) {
+					this.x = vx;
+					this.y = vy;
+				}
+
+				get magnitude() {
+					return Math.hypot(this.x, this.y);
+				}
+
+				get angle() {
+					return Math.atan2(this.y, this.x);
+				}
+			}
+
+			class Ball {
+				constructor(x, y, d, v) {
+					this.x = x;
+					this.y = y;
+					this.r = d/2;
+					this.v = v;
+					this.c = Math.random();
+					this.ch = Math.random() < 0.5 ? -1 : 1;
+					this.ignore = []
+				}
+
+				frame(delta) {
+					// Update position
+					this.x += this.v.x * delta;
+					this.y += this.v.y * delta;
+					// Update color hue
+					this.c = this.c + delta * this.ch / 10;
+					if(this.c > 1) {
+						this.c -= 1;
+					} else if(this.c < 0) {
+						this.c += 1;
+					}
+				}
+
+				bonk() {
+					// Randomize colors
+					this.c = Math.random();
+					this.ch = Math.random() < 0.5 ? -1 : 1;
+				}
+
+				get color() {
+					return hslToHex(Math.round(this.c * 360), 50, 50);
+				}
+
+				get mass() {
+					return Math.PI * Math.pow(this.r, 2);
+				}
+			}
+
+			// Create the balls
+			// I don't need to use an anonymous function but it saves unnecessary variables from being accessible after
+			const balls = (() => {
+				const result = [];
+				let created = true;
+				// Try to create balls until successful (usually first try, rarely more)
+				do {
+					created = true;
+					try {
+						// Try to create len number of balls without overlaps
+						const len = Math.floor(Math.random() * 16) + 4;
+						// const len = 2;
+						for(let i = 0; i < len; i++) {
+							let d = Math.random() / (len < 5 ? 8 : len*1.5) + 1/(len < 5 ? 8 :len*1.5);
+							let colliding = false;
+							let k = 0;
+							let x, y = 0;
+							// Try not to overlap the ball (500 tries before quit)
+							do {
+								x = Math.random() * (1 - d*2) + d;
+								y = Math.random() * (1 - d*2) + d;
+								colliding = false;
+								for(let j = 0; j < i; j++) {
+									if(collision(x, y, d, result[j].x, result[j].y, result[j].r)) {
+										colliding = true;
+										break;
+									}
+								}
+								k++;
+								// Quit if we've tried 500 times
+								if(k > 500) throw "reached threshold, r=" + d;
+							} while(colliding);
+							// For faster balls, change the "/ 2 - 0.25" to "- 0.5"
+							result.push(new Ball(x, y, d, new Velocity(Math.random() / 2 - 0.25, Math.random() / 2 - 0.25)));
+						}
+					} catch(e) {
+						// If a ball could not be placed, we need to reset and try again
+						created = false;
+						result.splice(0, result.length);
+					}
+				} while(!created);
+				// Final result
+				return result;
+			})();
+
+			let lastT;
+			// This runs every frame
+			function frame(t) {
+				// Get seconds since last frame
+				let delta = (t - (lastT || t)) / 1000;
+				// If it has been a considerable amount of time, discard
+				if(delta > .1) delta = 0;
+				// Do stuff
+				loop(delta);
+				lastT = t;
+				window.requestAnimationFrame(frame);
+			}
+			window.requestAnimationFrame(frame);
+
+			// This also runs every frame but is called by the frame function
+			function loop(delta) {
+				// Clear screen
+				ctx.clearRect(0, 0, canv.width, canv.height);
+
+				// Update ball positions and bounce off walls
+				for(let i = 0; i < balls.length; i++) {
+					const ball = balls[i];
+					ball.frame(delta);
+					// left-right wall collisions
+					if(ball.x - ball.r < 0) {
+						ball.x += Math.abs(ball.x - ball.r);
+						ball.v.x = Math.abs(ball.v.x);
+						ball.bonk();
+					} else if(ball.x + ball.r > 1) {
+						ball.x -= (ball.x + ball.r) - 1;
+						ball.v.x = -Math.abs(ball.v.x);
+						ball.bonk();
+					}
+					// top-bottom wall collisions
+					if(ball.y - ball.r < 0) {
+						ball.y += Math.abs(ball.y - ball.r);
+						ball.v.y = Math.abs(ball.v.y);
+						ball.bonk();
+					} else if(ball.y + ball.r > 1) {
+						ball.y -= (ball.y + ball.r) - 1;
+						ball.v.y = -Math.abs(ball.v.y);
+						ball.bonk();
+					}
+				}
+
+				// Check for collisons with other balls
+				for(let i = 0; i < balls.length - 1; i++) {
+					for(let j = i+1; j < balls.length; j++) {
+						/** @type {Ball} */
+						const b1 = balls[i];
+						/** @type {Ball} */
+						const b2 = balls[j];
+
+						// Collision code
+						if(collision(b1.x, b1.y, b1.r, b2.x, b2.y, b2.r)) {
+							if(b1.ignore.indexOf(b2) === -1) {
+								// TODO: figure out when in between frames the balls actually collided for accurate more collisions
+								// That way, can get rid of this temporary "ignore" solution
+								const overlap = dist(b1.x, b1.y, b1.r, b2.x, b2.y, b2.r);
+
+								b1.bonk();
+								b2.bonk();
+								b1.ignore.push(b2);
+								b2.ignore.push(b1);
+
+								// Figure out where the balls actually contacted
+								// TODO: when did balls touch?
+								// throw "stopping woo";
+
+								// Save some variables so that as we update values, we don't get inaccuracies due to updated variables
+								const conAngle = Math.atan2(b2.y - b1.y, b2.x - b1.x); // contact angle
+
+								const b1vx = b1.v.x;
+								const b1vy = b1.v.y;
+								const b2vx = b2.v.x;
+								const b2vy = b2.v.y;
+								const b1Mag = b1.v.magnitude;
+								const b2Mag = b2.v.magnitude;
+								const b1Ang = b1.v.angle;
+								const b2Ang = b2.v.angle;
+
+								// Figure out new velocities
+								// https://williamecraver.wixsite.com/elastic-equations
+								b1.v.x = (b1Mag * Math.cos(b1Ang - conAngle) * (b1.mass - b2.mass) + 2 * b2.mass * b2Mag * Math.cos(b2Ang - conAngle)) / (b1.mass + b2.mass) * Math.cos(conAngle) + b1Mag * Math.sin(b1Ang - conAngle) * Math.cos(conAngle + Math.PI / 2);
+								b1.v.y = (b1Mag * Math.cos(b1Ang - conAngle) * (b1.mass - b2.mass) + 2 * b2.mass * b2Mag * Math.cos(b2Ang - conAngle)) / (b1.mass + b2.mass) * Math.sin(conAngle) + b1Mag * Math.sin(b1Ang - conAngle) * Math.sin(conAngle + Math.PI / 2);
+								b2.v.x = (b2Mag * Math.cos(b2Ang - conAngle) * (b2.mass - b1.mass) + 2 * b1.mass * b1Mag * Math.cos(b1Ang - conAngle)) / (b1.mass + b2.mass) * Math.cos(conAngle) + b2Mag * Math.sin(b2Ang - conAngle) * Math.cos(conAngle + Math.PI / 2);
+								b2.v.y = (b2Mag * Math.cos(b2Ang - conAngle) * (b2.mass - b1.mass) + 2 * b1.mass * b1Mag * Math.cos(b1Ang - conAngle)) / (b1.mass + b2.mass) * Math.sin(conAngle) + b2Mag * Math.sin(b2Ang - conAngle) * Math.sin(conAngle + Math.PI / 2);
+							}
+						} else if(b1.ignore.indexOf(b2) > -1) {
+							b1.ignore.splice(b1.ignore.indexOf(b2), 1);
+							b2.ignore.splice(b2.ignore.indexOf(b1), 1);
+						}
+					}
+				}
+
+				// Draw the balls
+				for(let i = 0; i < balls.length; i++) {
+					ctx.fillStyle = balls[i].color;
+					ctx.beginPath();
+					ctx.ellipse(balls[i].x * canv.width, balls[i].y * canv.height, balls[i].r * canv.width, balls[i].r * canv.height, 0, 0, Math.PI * 2);
+					ctx.fill();
+				}
+			}
+
+			function hslToHex(h, s, l) {
+				l /= 100;
+				const a = s * Math.min(l, 1 - l) / 100;
+				const f = n => {
+					const k = (n + h / 30) % 12;
+					const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+					return Math.round(255 * color).toString(16).padStart(2, '0');   // convert to Hex and prefix "0" if needed
+				};
+				return "#" + f(0) + f(8) + f(4);
+			}
+
+			function dist(x1, y1, r1, x2, y2, r2) {
+				// Calculate distance between balls
+				return Math.hypot(x2-x1, y2-y1) - (r1 + r2);
+			}
+			function collision(x1, y1, r1, x2, y2, r2) {
+				// If distance is negative (or 0), the balls are colliding.
+				return dist(x1, y1, r1, x2, y2, r2) <= 0;
+				// return Math.sqrt(Math.pow(x2-x1, 2) + Math.pow(y2-y1, 2)) <= r1 + r2;
+			}
+
+			// Resizing
+			function resize() {
+				// Try to resize canvas if window is resized such that it forms a square in the center that fits
+				const box = document.body.getBoundingClientRect();
+				canv.width = Math.min(box.width, box.height);
+				canv.height = Math.min(box.width, box.height);
+			}
+			window.onresize = () => resize();
+			resize();
+		</script>
+	</body>
+</html>

@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Crossword Creator</title>
+		<style>
+			body {
+				font-family: sans-serif;
+			}
+			
+			button, select, input, textarea {
+				border: 1px solid currentColor;
+				border-radius: 4pt;
+				padding: 4pt;
+			}
+			button {
+				cursor: pointer;
+			}
+			
+			textarea {
+				width: 64ch;
+				height: 10em;
+				resize: vertical;
+			}
+			
+			h4 {
+				margin-block: 1em;
+			}
+			fieldset {
+				border-radius: 4px;
+				margin-bottom: 1em;
+			}
+			legend {
+				text-decoration: underline;
+			}
+			
+			#overlay {
+				pointer-events: none;
+				user-select: none;
+				position: fixed;
+				top: 0;
+				left: 0;
+				background-color: #ccc;
+				width: 100vw;
+				height: 100vh;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				opacity: 0;
+				transition: opacity 0.4s ease;
+				font-weight: bold;
+				font-size: larger;
+			}
+			#overlay.active {
+				pointer-events: default;
+				opacity: 1;
+			}
+			
+			#output #puzzle {
+				color: transparent;
+				user-select: none;
+			}
+			.solution {
+				border: 1px solid black;
+				background-color: #7f7f7f33;
+			}
+			#solutions:checked ~ #output #puzzle {
+				color: inherit;
+				user-select: all;
+			}
+			
+			#output #puzzle td {
+				width: 1em;
+				/*padding: 0.5ch;*/
+				padding: 5pt;
+				text-align: center;
+			}
+			.num {
+				display: inline-block;
+				position: absolute;
+				top: 0;
+				left: 0;
+				padding: 0 2px;
+				font-size: 8pt;
+				font-style: italic;
+				font-family: sans-serif;
+				color: black;
+				user-select: none;
+			}
+			#output caption {
+				font-family: sans-serif;
+			}
+			
+			h4 {
+				font-size: 1.125rem;
+			}
+			
+			#clues {
+				display: inline-grid;
+				grid-template-columns: 1fr 1fr;
+			}
+			#clues h5 {
+				font-size: 1rem;
+				margin-top: 0;
+				margin-bottom: 0.5em;
+				text-align: center;
+				text-decoration: underline;
+				column-span: all;
+			}
+			#clues ul {
+				margin-block: 0.5em;
+			}
+			#clues li {
+				break-inside: avoid;
+			}
+			#clues > * {
+				padding: 0.25ch 0.5ch;
+			}
+			#clues > *:first-child {
+				border-right: 1px solid currentColor;
+			}
+			
+			@media (prefers-color-scheme: dark) {
+				body {
+					background-color: black;
+					color: white;
+				}
+				a:link {
+					color: #ff8021;
+				}
+				a:visited {
+					color: #f14124;
+				}
+				
+				button, select, input, textarea {
+					background-color: #343434;
+					color: inherit;
+				}
+				
+				.solution {
+					border-color: white;
+				}
+				.num {
+					color: white;
+				}
+				
+				#overlay {
+					background-color: #333;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Crossword Creator</h1>
+		<p>Create a custom crossword. NOTE: this algorithm takes a lot of time to complete, especially with larger words or datasets.</p>
+		<p>If it can't create a puzzle because it can't find a good configuration, try again a few times or increase the number of tries. If that doesn't work, change settings or words.</p>
+		<p>Note: this creation algorithm is not perfect. Certain complex shapes that are valid in crosswords are impossible for it to create due to these limitations.</p>
+		<h3>Step 1: Settings</h3>
+		<form id="settings">
+			<h4>Words</h4>
+			<p><label for="words">Enter term (&ge;2 letters) and clue pairs with comma in between, each pair separated by a new line.</label></p>
+			<p><textarea id="words"></textarea></p>
+			<h4>Misc Settings</h4>
+			<fieldset>
+				<legend>General</legend>
+				<p><label>Crossword title: <input type="text" name="title" placeholder="Enter title"></label></p>
+				<p><label><input type="checkbox" name="wordbank"> Create word bank</label></p>
+				<!--<p><label><input type="checkbox" name="allowalone" checked> Allow floating words (words that can't be connected to any other words will be made "floating")</label></p>-->
+				<p><label><input type="checkbox" name="remspaces" checked> Remove spaces in crossword terms</label></p>
+				<p><label>Allowed attempts to create crossword: <input type="number" name="tries" min="10" max="10000" value="100" step="10"></label></p>
+			</fieldset>
+			<fieldset>
+				<legend>Size</legend>
+				<p>Maximum width and height (leave as 0 for unbounded space, slower)</p>
+				<blockquote>
+					<label>Max width: <input type="number" name="width" min="0" value="20"></label>
+					<br>
+					<label>Max height: <input type="number" name="height" min="0" value="20"></label>
+				</blockquote>
+				<p><button id="optimize" type="button">Attempt to find optimal square</button></p>
+			</fieldset>
+			<h4>Submit</h4>
+			<p><button id="submit" type="submit">Generate</button></p>
+		</form>
+		<h3>Step 2: Output</h3>
+		<input type="checkbox" id="solutions"><label for="solutions"> Show solution</label>
+		<p></p>
+		<div id="output"></div>
+		<div id="overlay">
+			<p>Creating...</p>
+		</div>
+		<script>
+			const out = document.getElementById("output");
+			const overlay = document.getElementById("overlay");
+			let DEBUG = false;
+			
+			function checkForIssues(words, width, height, boundless) {
+				if(words.length === 0) {
+					alert("ERROR: no valid words in word list!");
+					return true;
+				}
+				if(!boundless && words.some(s => s[0].length > width && s[0].length > height)) {
+					alert("ERROR: a word (" + words.filter(s => s[0].length > width && s[0].length > height)[0] + ") was found to be too big for the given dimensions. Increase either the width or the height.");
+					return true;
+				}
+				if(words.some(s => s[0].length < 2)) {
+					alert("ERROR: a word (" + words.filter(s => s[0].length < 2)[0][0] + ") was found to have too few letters.");
+					return true;
+				}
+				if(!boundless && words.reduce((a, v) => a + v, 0) < width * height) {
+					alert("ERROR: the grid has too few spaces to accomodate for the words provided!");
+					return true;
+				}
+				
+				return false;
+			}
+			
+			document.getElementById("optimize").onclick = function() {
+				// Get variables
+				const form = document.forms.settings.elements;
+				
+				// Get words from input
+				const wordSplitRegExp = new RegExp("[^A-Za-zÀ-ÖØ-öø-ÿ" + (form.remspaces.checked ? "" : " ") + "]+", "gu");
+				const wordListRaw = form.words.value.split(/\r\n|\r|\n/);
+				const words = wordListRaw
+					.map(s => s.split(","))
+					.filter(a => a.length >= 2)
+					.map(a => a[0].split(wordSplitRegExp).join("").toUpperCase())
+					.filter(s => s.length > 0);
+				
+				// Check for potential issues (as though boundless because final result *should* be good enough)
+				if(checkForIssues(words.map(s => [s, ""]), 0, 0, true)) {
+					return;
+				}
+				
+				// Calculate a potential square where ~3/8 (0.375) of the space is filled with letters (number is arbitrary guesstimation but it works)
+				const potentialArea = words.reduce((a, s) => a + s.length, 0) / 0.375;
+				
+				// Side length is larger of potential square side length and maximum word length
+				const sideLength = Math.max(
+					Math.ceil(Math.sqrt(potentialArea)),
+					words.reduce((a, s) => Math.max(a, s.length), 0)
+				);
+				
+				// Update values
+				form.width.value = sideLength;
+				form.height.value = sideLength;
+			}
+			document.getElementById("optimize").onkeyup = function(e) {
+				if(e.key === "Enter") {
+					e.stopPropagation();
+					this.click();
+				}
+			}
+			
+			// Like with the word search creator, this is all entirely in a stupidly long event handler. I still make terrible decisions.
+			document.forms.settings.onsubmit = async function(e){
+				e.preventDefault();
+				
+				// Get width and height
+				const width = Number(this.width.value);
+				const height = Number(this.height.value);
+				const tries = Number(this.tries.value);
+				const title = this.title.value;
+				const boundless = (width === 0 || height === 0);
+				
+				// Get words from input
+				const wordSplitRegExp = new RegExp("[^0-9A-Za-zÀ-ÖØ-öø-ÿ" + (this.remspaces.checked ? "" : " ") + "]+", "gu");
+				const wordListRaw = this.words.value.split(/\r\n|\r|\n/);
+				const words = wordListRaw
+					.map(s => s.split(","))
+					.filter(a => a.length >= 2)
+					.map(a => [
+						a[0].split(wordSplitRegExp).join("").toUpperCase(),
+						(a.length > 2 ? a.slice(1).join(",") : a[1]).trim()
+					])
+					.filter(s => s[0].length > 0);
+				
+				// Error check
+				if(checkForIssues(words, width, height, boundless)) {
+					return;
+				}
+				
+				// Try specified # of times to create a word search
+				let grid;
+				let success = false;
+				const starts = [];
+				
+				overlay.innerText = "Creating...";
+				overlay.classList.add("active");
+				await wait(500);
+				
+				out.innerHTML = "";
+				
+				for(let attempt = 1; attempt <= tries; attempt++) {
+					overlay.innerText = "Placing words... (attempt " + attempt + "/" + tries + ")";
+					await wait(50);
+					
+					if(DEBUG) console.log("================================\nAttempt", attempt);
+					
+					// Randomize word list
+					const wordsRandom = (() => {
+						const temp = words.slice();
+						const temp2 = [];
+						
+						const l = temp.length;
+						for(let i = 0; i < l; i++) {
+							temp2.push(...temp.splice(Math.floor(Math.random() * temp.length), 1));
+						}
+						
+						return temp2;
+					})();
+					
+					// Initialize grid array
+					if(!boundless) {
+						grid = new Array(height);
+						for(let i = 0; i < grid.length; i++) grid[i] = new Array(width);
+					} else {
+						grid = [];
+					}
+					starts.splice(0, starts.length);
+					
+					const deferredWords = new Set();
+					let deferredTemp = -1;
+					
+					let wordsPlaced = 0;
+					
+					//for(const [word, clue] of wordsRandom) {
+					for(const pair of wordsRandom) {
+						const word = pair[0];
+						const clue = pair[1];
+						
+						if(DEBUG) console.log(word);
+						
+						// If no words have been placed, place down the word in a random position.
+						if(wordsPlaced === 0) {
+							let direction = Math.random() < 0.5 ? "across" : "down";
+							
+							if(boundless) {
+								// If the word search space is unlimited, create the initial word
+								if(direction === "across") {
+									grid.push(word.split(""));
+								} else {
+									for(let i = 0; i < word.length; i++) {
+										grid.push([{
+											letter: word[i],
+											dir: [direction]
+										}]);
+									}
+								}
+								
+								starts.push({
+									word: word,
+									clue: clue,
+									x: 0,
+									y: 0,
+									dir: direction
+								});
+							} else {
+								let x, y;
+								// Otherwise just put it somewhere where it fits in the grid
+								if(direction === "across") {
+									y = Math.floor(Math.random() * grid.length);
+									x = Math.floor(Math.random() * (grid[y].length - word.length));
+									
+									for(let i = 0; i < word.length; i++) {
+										grid[y][x+i] = {
+											letter: word[i],
+											dir: ["across"]
+										};
+									}
+								} else {
+									y = Math.floor(Math.random() * (grid.length - word.length));
+									x = Math.floor(Math.random() * grid[y].length);
+									
+									for(let i = 0; i < word.length; i++) {
+										grid[y+i][x] = {
+											letter: word[i],
+											dir: ["down"]
+										};
+									}
+								}
+								
+								starts.push({
+									word: word,
+									clue: clue,
+									x: x,
+									y: y,
+									dir: direction
+								});
+							}
+							
+							wordsPlaced++;
+							continue;
+						}
+						
+						// Check for seen words and to make sure we aren't looping through the same words
+						if(deferredWords.has(pair)) {
+							if(deferredTemp === deferredWords.size) {
+								break;
+							}
+							deferredTemp = deferredWords.size;
+							deferredWords.clear();
+						}
+						
+						// Otherwise look for available spaces to put word
+						const availableSpaces = [];
+						// Check for every letter so that we check the same letter in different positions
+						for(let letter = 0; letter < word.length; letter++) {
+							for(const start of starts) {
+								for(let i = 0; i < start.word.length; i++) {
+									let [x, y] = start.dir === "across" ? [start.x + i, start.y] : [start.x, start.y + i];
+									if(word[letter] === grid[y][x].letter) {
+										// Check horizontal
+										if((x-1 < 0 || typeof grid[y][x-1] === "undefined") && (x+1 >= grid[y].length || typeof grid[y][x+1] === "undefined")) {
+											availableSpaces.push({
+												x: x,
+												y: y,
+												dir: "across",
+												offset: letter
+											});
+										}
+										// Check vertical
+										else if((y-1 < 0 || typeof grid[y-1][x] === "undefined") && (y+1 >= grid.length || typeof grid[y+1][x] === "undefined")) {
+											availableSpaces.push({
+												x: x,
+												y: y,
+												dir: "down",
+												offset: letter
+											});
+										}
+									}
+								}
+							}
+							// Old code with O[n³] time complexity :3
+							/*for(let y = 0; y < grid.length; y++) {
+								for(let x = 0; x < grid[y].length; x++) {
+									if(word[letter] === grid[y][x]?.letter) {
+										// Check horizontal
+										if((x-1 < 0 || typeof grid[y][x-1] === "undefined") && (x+1 >= grid[y].length || typeof grid[y][x+1] === "undefined")) {
+											availableSpaces.push({
+												x: x,
+												y: y,
+												dir: "across",
+												offset: letter
+											});
+										}
+										// Check vertical
+										else if((y-1 < 0 || typeof grid[y-1][x] === "undefined") && (y+1 >= grid.length || typeof grid[y+1][x] === "undefined")) {
+											availableSpaces.push({
+												x: x,
+												y: y,
+												dir: "down",
+												offset: letter
+											});
+										}
+									}
+								}
+							}*/
+						}
+						
+						// If there are no letter intersections we can place this at, check again later.
+						if(availableSpaces.length === 0) {
+							wordsRandom.push(pair);
+							deferredWords.add(pair);
+							//deferredWords.push([word, clue]);
+							continue;
+						}
+						
+						// Now go through all of these (randomly) until we get a good result
+						const l = availableSpaces.length;
+						let placedWord = false;
+						for(let s = 0; s < l; s++) {
+							const space = availableSpaces.splice(Math.floor(Math.random() * availableSpaces.length), 1)[0];
+							//console.log("Space: ", space.x, space.y, "|", space.offset, "|", space.dir);
+							
+							// Check bounds if not boundless
+							if(!boundless) {
+								// x-axis
+								if(space.dir === "across") {
+									if(space.x - space.offset < 0 || space.x + (word.length - space.offset) - 1 >= width)
+										continue;
+								}
+								// y-axis
+								else {
+									if(space.y - space.offset < 0 || space.y + (word.length - space.offset) - 1 >= height)
+										continue;
+								}
+							}
+							
+							// Check for letters in the way or at ends that would invalidate the word
+							if(space.dir === "across") {
+								// For placing on x-axis
+								
+								let start = space.x - space.offset;
+								let end = space.x + (word.length - space.offset) - 1;
+								
+								// Start with bounded OOBs
+								if(!boundless && (start < 0 || end >= grid[space.y].length)) {
+									continue;
+								}
+								
+								// Start with spaces after ends
+								if(!(boundless && start < 0) && start !== 0 && typeof grid[space.y][start - 1] !== "undefined") {
+									continue;
+								} else if(!(boundless && end >= grid[space.y].length) && end !== grid[space.y].length - 1 && typeof grid[space.y][end + 1] !== "undefined") {
+									continue;
+								}
+								
+								// Now check for bad intersections (different letters or starts in the same direction)
+								// Also check for bad side intersections since it's convenient to do so here
+								let foundIssue = false;
+								for(let i = 0; i < word.length; i++) {
+									let x = i + start;
+									let o = (x >= 0 && x < grid[space.y].length) ? grid[space.y][x] : undefined;
+									
+									if(typeof o === "undefined") {
+										// Do a quick check for ends of perpendicular that would be touching
+										if((x >= 0 && x < grid[space.y].length) && (
+											(space.y-1 >= 0 && grid[space.y-1][x]?.dir.length > 0)
+											||
+											(space.y+1 < grid.length && grid[space.y+1][x]?.dir.length > 0)
+										)) {
+											foundIssue = true;
+											break;
+										}
+										
+										continue;
+									}
+									
+									// Where the word is going to be placed
+									if(grid[space.y][x] && grid[space.y][x].dir.indexOf("across") > -1) {
+										foundIssue = true;
+										break;
+									} else if(o.letter !== word[i]) {
+										foundIssue = true;
+										break;
+									}
+								}
+								if(foundIssue) {
+									continue;
+								}
+								
+								// If we've made it this far, we're successful
+								
+								// Start by expanding the board if necessary and boundless
+								if(boundless) {
+									if(start < 0) {
+										let offset = -start;
+										for(let y = 0; y < grid.length; y++) {
+											grid[y].unshift(...new Array(offset));
+										}
+										
+										start = 0;
+										end += offset;
+										
+										for(const o of starts) {
+											o.x += offset;
+										}
+									}
+									if(end >= grid[0].length) {
+										let offset = end - grid[0].length + 1;
+										for(let y = 0; y < grid.length; y++) {
+											grid[y].push(...new Array(offset));
+										}
+									}
+								}
+								
+								// Now place the letters
+								for(let i = 0; i < word.length; i++) {
+									//grid[space.y][start + i] = word[i];
+									grid[space.y][start + i] = {
+										letter: word[i],
+										dir: ["across", ...(grid[space.y][start + i]?.dir || [])]
+									};
+								}
+								
+								wordsPlaced++;
+								starts.push({
+									word: word,
+									clue: clue,
+									x: start,
+									y: space.y,
+									dir: space.dir
+								});
+								placedWord = true;
+								break;
+							} else {
+								// For placing on y-axis
+								
+								let start = space.y - space.offset;
+								let end = space.y + (word.length - space.offset) - 1;
+								
+								// Start with bounded OOBs
+								if(!boundless && (start < 0 || end >= grid.length)) {
+									continue;
+								}
+								
+								// Check spaces after ends
+								if(!(boundless && start < 0) && start !== 0 && typeof grid[start - 1][space.x] !== "undefined") {
+									continue;
+								} else if(!(boundless && end >= grid.length) && end !== grid.length - 1 && typeof grid[end + 1][space.x] !== "undefined") {
+									continue;
+								}
+								
+								// Now check for bad intersections (different letters or starts in the same direction)
+								// Also check for bad side intersections since it's convenient to do so here
+								let foundIssue = false;
+								for(let i = 0; i < word.length; i++) {
+									let y = i + start;
+									let o = (y >= 0 && y < grid.length) ? grid[y][space.x] : undefined;
+									
+									if(typeof o === "undefined") {
+										// Do a quick check for ends of perpendicular that would be touching
+										if((y >= 0 && y < grid.length) && (
+											(space.x-1 >= 0 && grid[y][space.x-1]?.dir.length > 0)
+											||
+											(space.x+1 < grid[0].length && grid[y][space.x+1]?.dir.length > 0)
+										)) {
+											foundIssue = true;
+											break;
+										}
+										
+										continue;
+									}
+									
+									// Where the word is going to be placed
+									if(grid[y][space.x] && grid[y][space.x].dir.indexOf("down") > -1) {
+										foundIssue = true;
+										break;
+									} else if(o.letter !== word[i]) {
+										foundIssue = true;
+										break;
+									}
+								}
+								if(foundIssue) {
+									continue;
+								}
+								
+								// If we've made it this far, we're successful
+								
+								// Start by expanding the board if necessary and boundless
+								if(boundless) {
+									if(start < 0) {
+										let offset = -start;
+										for(let y = 0; y < offset; y++) {
+											grid.unshift(new Array(grid[0].length));
+										}
+										start = 0;
+										end += offset;
+										
+										for(const o of starts) {
+											o.y += offset;
+										}
+									}
+									if(end >= grid.length) {
+										let offset = end - grid.length + 1;
+										for(let y = 0; y < offset; y++) {
+											grid.push(new Array(grid[0].length));
+										}
+									}
+								}
+								
+								// Now place the letters
+								for(let i = 0; i < word.length; i++) {
+									grid[start + i][space.x] = {
+										letter: word[i],
+										dir: ["down", ...(grid[start + i][space.x]?.dir || [])]
+									};
+								}
+								
+								wordsPlaced++;
+								starts.push({
+									word: word,
+									clue: clue,
+									x: space.x,
+									y: start,
+									dir: space.dir
+								});
+								placedWord = true;
+								break;
+							}
+						}
+						
+						if(!placedWord) {
+							wordsRandom.push(pair);
+							deferredWords.add(pair);
+							//deferredWords.push([word, clue]);
+						}
+					}
+					
+					if(wordsPlaced === words.length) {
+						success = true;
+						break;
+					}
+				}
+				
+				// Remove blank space if necessary (no blank space in boundless so skip if so)
+				if(!boundless) {
+					// From front of y-axis
+					for(let i = 0; i < grid.length; i++) {
+						if(grid[i].findIndex(v => typeof v !== "undefined") > -1) {
+							grid.splice(0, i);
+							for(let j = 0; j < starts.length; j++) {
+								starts[j].y -= i;
+							}
+							break;
+						}
+					}
+					// From back of y-axis
+					for(let i = grid.length - 1; i >= 0; i--) {
+						if(grid[i].findIndex(v => typeof v !== "undefined") > -1) {
+							grid.splice(i + 1, grid.length - i);
+							break;
+						}
+					}
+					
+					// From front of x-axis
+					let minX = width;
+					for(let i = 0; i < grid.length; i++) {
+						minX = Math.min(minX, grid[i].findIndex(v => typeof v !== "undefined"));
+					}
+					for(let i = 0; i < grid.length; i++) {
+						grid[i].splice(0, minX);
+					}
+					for(let i = 0; i < starts.length; i++) {
+						starts[i].x -= minX;
+					}
+					// From back of x-axis
+					let maxX = 0;
+					for(let i = 0; i < grid.length; i++) {
+						maxX = Math.max(maxX, grid[i].findLastIndex(v => typeof v !== "undefined"));
+					}
+					for(let i = 0; i < grid.length; i++) {
+						grid[i].splice(maxX + 1, width - maxX);
+					}
+				}
+				
+				// For debug purposes but I'm not removing it lmao
+				let s = "";
+				for(let i = 0; i < grid.length; i++) {
+					s += "|";
+					for(let j = 0; j < grid[i].length; j++) {
+						s += grid[i][j]?.letter || " ";
+					}
+					s += "|\n";
+				}
+				console.log(s);
+				
+				// Check if we were unsuccessful
+				if(!success) {
+					alert("Unsuccessful! Could not find a combination in which all words fit.");
+					overlay.classList.remove("active");
+					return;
+				}
+				
+				// Number the words in column order (up->down, left->right)
+				
+				// Start by sorting in the order we will number them
+				starts.sort((a, b) => (a.y - b.y) * grid[0].length + a.x - b.x);
+				// Now put the numbers
+				const nums = new Map();
+				for(let i = 0; i < starts.length; i++) {
+					const str = starts[i].x + "," + starts[i].y;
+					if(!nums.has(str)) {
+						nums.set(str, nums.size + 1);
+					}
+					starts[i].num = nums.size;
+				}
+				
+				// Notify user of completion
+				overlay.innerText = "Done!";
+				overlay.classList.remove("active");
+				
+				// Put output for user to see
+				const table = out.appendChild(document.createElement("table"));
+				table.id = "puzzle";
+				table.style.fontFamily = "monospace";
+				table.style.borderCollapse = "collapse";
+				if(title !== "") table.appendChild(document.createElement("caption")).appendChild(document.createElement("h2")).innerText = title;
+				const tbody = table.appendChild(document.createElement("tbody"));
+				
+				for(let i = 0; i < grid.length; i++) {
+					const tr = tbody.appendChild(document.createElement("tr"));
+					for(let j = 0; j < grid[i].length; j++) {
+						const td = tr.appendChild(document.createElement("td"));
+						td.innerText = grid[i][j]?.letter || "\xa0";
+						
+						if(grid[i][j]) {
+							td.classList.add("solution");
+							
+							// Put fancy number
+							const str = j + "," + i;
+							if(nums.has(str)) {
+								const numBox = document.createElement("span");
+								numBox.classList.add("num");
+								numBox.innerText = nums.get(str);
+								td.appendChild(numBox);
+								td.style.position = "relative";
+							}
+						}
+					}
+				}
+				
+				// Also make sure to put clues
+				out.appendChild(document.createElement("h4")).innerText = "Clues";
+				const clueTable = out.appendChild(document.createElement("div"));
+				clueTable.id = "clues";
+				
+				const cluesAcross = clueTable.appendChild(document.createElement("div"));
+				const cluesDown = clueTable.appendChild(document.createElement("div"));
+				
+				cluesAcross.appendChild(document.createElement("h5")).innerText = "Across";
+				cluesDown.appendChild(document.createElement("h5")).innerText = "Down";
+				
+				const cluesAcrossList = cluesAcross.appendChild(document.createElement("ul"))
+				const cluesDownList = cluesDown.appendChild(document.createElement("ul"))
+				for(const o of starts) {
+					let li;
+					if(o.dir === "across") {
+						li = cluesAcrossList.appendChild(document.createElement("li"));
+					} else {
+						li = cluesDownList.appendChild(document.createElement("li"));
+					}
+					li.style.listStyleType = "\"" + o.num + ". \"";
+					li.innerText = o.clue;
+				}
+				
+				// Put word bank if necessary
+				const origWords = (() => {
+					const list = wordListRaw
+						.map(s => s.split(","))
+						.filter(a => a.length >= 2)
+						.map(a => a[0])
+						.filter(s => s.length > 0);
+					
+					const a = [];
+					const l = list.length;
+					for(let i = 0; i < l; i++) {
+						a.push(list.splice(Math.floor(Math.random() * list.length), 1)[0]);
+					}
+					
+					return a;
+				})();
+				if(this.wordbank.checked) {
+					out.appendChild(document.createElement("h4")).innerText = "Word Bank";
+					const bankTable = out.appendChild(document.createElement("div"));
+					bankTable.id = "bank";
+					
+					const ul = bankTable.appendChild(document.createElement("ul"));
+					
+					for(const word of origWords) {
+						ul.appendChild(document.createElement("li")).innerText = word;
+					}
+				}
+				
+				// Set columns in CSS
+				const cols = Math.floor(Math.cbrt(Math.max(cluesAcrossList.childElementCount, cluesDownList.childElementCount)));
+				if(cols > 1) {
+					cluesAcross.style.columns = cols;
+					cluesDown.style.columns = cols;
+				}
+				
+				// Add button for actually printing
+				out.appendChild(document.createElement("h3")).innerText = "Step 3: Export";
+				
+				const button1 = out.appendChild(document.createElement("p")).appendChild(document.createElement("button"));
+				button1.innerText = "Print output"
+				button1.onclick = () => {
+					openNewTab(
+						[
+							starts.filter(o => o.dir === "across").map(o => o.num + ". " + o.clue),
+							starts.filter(o => o.dir === "down").map(o => o.num + ". " + o.clue)
+						],
+						title,
+						this.wordbank.checked ? origWords : []
+					);
+				};
+			}
+			
+			function wait(ms) {
+				return new Promise(res => {
+					setTimeout(res, ms);
+				});
+			}
+			
+			function openNewTab(clueList, title, wordBank) {
+				// Set up variables and tab
+				const width = out.querySelector("tr").childElementCount;
+				const height = out.querySelector("tbody").childElementCount;
+				const tab = window.open("", "_blank");
+				
+				const maxWidthIn = 8.25;
+				const maxHeightIn = 10.5;
+				const ratio = width / height;
+				const wider = ratio > (maxWidthIn / maxHeightIn);
+				
+				const tableWidth = Math.round((wider ? maxWidthIn : maxWidthIn * ratio) * 96); // inches * 96 = px
+				const tableHeight = Math.round((wider ? maxHeightIn / ratio : maxHeightIn) * 96);
+				
+				const fontSize = (() => {
+					let ratio = width / height;
+					if(tableHeight / ratio < tableWidth) {
+						return (tableHeight / height) / 2;
+					} else {
+						return (tableWidth / width * ratio) / 2;
+					}
+				})();
+				
+				let cluesLength = clueList.flat().length;
+				let cols = Math.ceil(Math.cbrt(cluesLength) / 2) * 2;
+				let cluesFontSize = Math.max(48 / Math.sqrt(cluesLength), 8.5);
+				
+				let bankcols = Math.round((Math.sqrt(wordBank.length) + Math.cbrt(wordBank.length)) / 2);
+				let bankFontSize = Math.max(36 / Math.sqrt(wordBank.length), 8.5);
+				
+				// Set styling
+				tab.document.head.appendChild(document.createElement("style")).innerHTML = `
+					html {
+						background-color: #ccc;
+					}
+					body {
+						font-family: sans-serif;
+						text-align: center;
+						min-height: 11in;
+						width: 8.5in;
+						margin: 0.25in;
+						padding: 0.25in;
+						background-color: white;
+						box-shadow: 0 0.5em 1em black;
+						display: flex;
+						/*justify-content: center;*/
+						flex-direction: column;
+					}
+					h1 {
+						margin-top: 0;
+						margin-bottom: 0.5em;
+					}
+					h2 {
+						margin-top: 0.5em;
+						margin-bottom: 0.125em;
+					}
+					#grid {
+						aspect-ratio: ${width} / ${height};
+						/*width: calc(${tableWidth}px + 1em);*/
+						height: calc(${tableHeight}px + 1em);
+						margin: 0.25em auto;
+						font-size: ${fontSize}px;
+						border-collapse: collapse;
+					}
+					.cell {
+						border: 1px solid black;
+					}
+					.num {
+						display: inline-block;
+						position: absolute;
+						top: 0;
+						left: 0;
+						padding: 0 2px;
+						font-style: italic;
+						font-family: sans-serif;
+						font-size: ${Math.max(tableHeight / height / 3, 6.5)}px;
+						user-select: none;
+					}
+					#clues {
+						font-size: ${cluesFontSize}px;
+						columns: ${cols};
+						width: 100%;
+						margin-top: 1em;
+						text-align: left;
+					}
+					#clues * {
+						margin: 0;
+						padding: 0.25em 0;
+						break-inside: avoid;
+					}
+					#clues h2 {
+						break-after: avoid;
+						break-before: column;
+					}
+					#bank {
+						columns: ${bankcols};
+						width: 100%;
+						margin-top: 0.25em;
+					}
+					#bank * {
+						margin: 0;
+						padding: 0.125em 0;
+					}
+					@media print {
+						html {
+							background-color: white;
+						}
+						body {
+							margin: 0;
+							box-shadow: none;
+						}
+					}
+				`;
+				
+				// Create title
+				if(title !== "") {
+					let h1 = tab.document.body.appendChild(document.createElement("h1"));
+					h1.innerText = title;
+				}
+				
+				// Create table
+				let grid = tab.document.body.appendChild(document.createElement("table"));
+				grid.id = "grid";
+				let oldTable = out.querySelector("tbody");
+				for(let i = 0; i < height; i++) {
+					const tr = tab.grid.appendChild(document.createElement("tr"));
+					for(let j = 0; j < width; j++) {
+						const td = tr.appendChild(document.createElement("td"));
+						if(oldTable.children[i].children[j].classList.contains("solution")) {
+							td.classList.add("cell");
+							if(oldTable.children[i].children[j].children.length > 0) {
+								td.style.position = "relative";
+								const span = td.appendChild(document.createElement("span"));
+								span.innerText = oldTable.children[i].children[j].children[0].innerText;
+								span.classList.add("num");
+							}
+						}
+					}
+				}
+				
+				// Create clues
+				let table = tab.document.body.appendChild(document.createElement("div"));
+				table.id = "clues";
+				table.appendChild(document.createElement("h2")).innerText = "Across";
+				for(const clue of clueList[0]) {
+					table.appendChild(document.createElement("p")).innerText = clue;
+				}
+				table.appendChild(document.createElement("h2")).innerText = "Down";
+				for(const clue of clueList[1]) {
+					table.appendChild(document.createElement("p")).innerText = clue;
+				}
+				
+				// Create word bank (if necessary)
+				if(wordBank.length > 0) {
+					tab.document.body.appendChild(document.createElement("h2")).innerText = "Word Bank";
+					let bank = tab.document.body.appendChild(document.createElement("div"));
+					bank.id = "bank";
+					for(const word of wordBank) {
+						bank.appendChild(document.createElement("p")).innerText = word;
+					}
+				}
+				
+				// Focus tab and print
+				tab.focus();
+				tab.print();
+			}
+			
+			// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions#escaping (MDN releases code under CC0 public domain)
+			function escapeRegExp(string) {
+				return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+			}
+		</script>
+	</body>
+</html>

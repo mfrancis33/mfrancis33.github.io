@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width">
+	<title>Another Word Finder</title>
+	<style>
+	body {
+		font-family: sans-serif;
+	}
+	</style>
+</head>
+
+<body>
+	<h1>Another Word Finder</h1>
+	<p>Enter the letters you are given and click the button to find all words that can be made with that combination of letters.</p>
+	<p>Enter letters: <input type="text" placeholder="Enter all letters"></p>
+	<p>Enter length: <input type="number" placeholder="Enter length of words" min="1" pattern="\d*"></p>
+	<p><button>Find</button></p>
+	<hr>
+	<h3>Result</h3>
+	<ol></ol>
+	<script src="words-old.js"></script>
+	<script>
+		document.querySelector("button").onclick = () => {
+			const words = [];
+			const input = document.querySelector("input[type='text']");
+			const length = parseInt(document.querySelector("input[type='number']").value, 10);
+		  
+			//Get required letters
+			const requirements = (() => {
+				let o = {};
+				//The regex /\W*/g allows it to split the text between individual letters while getting rid of spaces that might accidentally be added by mobile devices
+				for(const letter of input.value.toLowerCase().split(/\W*/g)){
+					if(o[letter] == null){
+						o[letter] = 1;
+					} else {
+						o[letter]++;
+					}
+				}
+				return o;
+			})();
+		  
+			//Filter words
+			for(const word of dictionary){
+				const letters = new Set(word.split(""));
+				let continueFlag = false;
+
+				//Compare length
+				if(!isNaN(length) && length > 0 && word.length != length)
+					continue;
+
+				//Look for non-existent letters in input
+				for(const letter of letters)
+					if(Object.keys(requirements).indexOf(letter) == -1){
+						continueFlag = true;
+						break;
+					}
+				if(continueFlag) continue;
+
+				//Look for non-existent letters in word
+				/*for(const letter of Object.keys(requirements))
+					if(!letters.has(letter)){
+						continueFlag = true;
+						break;
+					}
+				if(continueFlag) continue;*/
+
+				//Get quantities of letters
+				const quantities = (() => {
+					let o = {};
+					for(const letter of word.split("")){
+						if(o[letter] == null){
+							o[letter] = 1;
+						} else {
+							o[letter]++;
+						}
+					}
+					return o;
+				})();
+
+				//Compare letter quantities
+				for(const letter of Object.keys(quantities))
+					if(quantities[letter] > requirements[letter]){
+						continueFlag = true;
+						break;
+					}
+				if(continueFlag) continue;
+
+				//Word has passed all checks
+				words.push(word);
+			}
+
+			//Sort array by length and alphabet
+			//https://stackoverflow.com/a/44554173
+			words.sort((a, b) => a.length - b.length || a.localeCompare(b));
+			console.log(words);
+
+			//Put on screen
+			document.querySelector("ol").innerHTML = "";
+			for(const word of words){
+				document.querySelector("ol").appendChild(document.createElement("li")).innerText = word;
+			}
+
+			//Error message if no results
+			if(words.length == 0){
+				document.querySelector("ol").appendChild(document.createElement("li")).innerText = "No results!";
+			}
+		};
+	</script>
+</body>
+
+</html>

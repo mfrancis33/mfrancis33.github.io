@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<title>Splash 2</title>
+		<style>
+			body {
+				text-align: center;
+			}
+		</style>
+	</head>
+	<body>
+		<p><button>Splash 2</button></p>
+		<p><canvas></canvas></p>
+		<p>Based on <a href="https://wrayk.github.io/splash/" target="_blank">Splash</a> | <button id="newtab">Open image in new tab</button></p>
+		<script>
+			const colors = [];
+			const stack = [];
+			const button = document.querySelector("button");
+			const canv = document.querySelector("canvas");
+			const ctx = canv.getContext("2d");
+			
+			function rand(min, max) { // min inclusive, max exclusive, integers only
+				return Math.floor(Math.random() * (max - min)) + min;
+			}
+			
+			function clamp(c) {
+				return Math.max(0, Math.min(c, 255));
+			}
+			
+			function shuffle(arr) {
+				let temp = arr.splice(0, arr.length);
+				while(temp.length > 0) {
+					arr.push(temp.splice(rand(0, temp.length), 1)[0]);
+				}
+			}
+			
+			function step() {
+				let currStack = stack.splice(0, stack.length);
+				let deferred = [];
+				shuffle(currStack);
+				
+				if (currStack.length > 10) {
+					let deferAmt = rand(0, currStack.length);
+					for (let i = 0; i < deferAmt; i++) {
+						deferred.push(currStack.splice(rand(0, currStack.length), 1)[0]);
+					}
+				}
+				
+				for (let i = 0; i < currStack.length; i++) {
+					let curr = currStack[i];
+					
+					let unit = (1 / colors.length) * canv.width;
+					ctx.fillStyle = "rgb(" + curr.r + ", " + curr.g + ", " + curr.b + ")";
+					ctx.fillRect(Math.round(curr.x * unit), Math.round(curr.y * unit), Math.round(unit), Math.round(unit));
+					
+					let directions = [];
+					if (curr.x-1 >= 0 && colors[curr.x-1][curr.y] == null) directions.push([curr.x-1, curr.y]);
+					if (curr.x+1 < colors.length && colors[curr.x+1][curr.y] == null) directions.push([curr.x+1, curr.y]);
+					if (curr.y-1 >= 0 && colors[curr.x][curr.y-1] == null) directions.push([curr.x, curr.y-1]);
+					if (curr.y+1 < colors.length && colors[curr.x][curr.y+1] == null) directions.push([curr.x, curr.y+1]);
+					
+					if (directions.length > 0) {
+						shuffle(directions);
+						for (let j = 0; j < directions.length; j++) {
+							let pos = directions[j];
+							let obj = {x: pos[0], y: pos[1], r: clamp(curr.r + rand(-10, 11)), g: clamp(curr.g + rand(-10, 11)), b: clamp(curr.b + rand(-10, 11))};
+							stack.push(obj);
+							colors[pos[0]][pos[1]] = obj;
+						}
+					}
+				}
+				
+				for (let i = 0; i < deferred.length; i++) {
+					stack.push(deferred[i]);
+				}
+				
+				if (stack.length > 0) {
+					window.requestAnimationFrame(step);
+				}
+			}
+			
+			function setup(size, length) {
+				colors.splice(0, colors.length);
+				stack.splice(0, stack.length);
+				for (let i = 0; i < size; i++) {
+					let a = [];
+					for (let j = 0; j < size; j++) {
+						a.push(null);
+					}
+					colors.push(a);
+				}
+				canv.width = length;
+				canv.height = length;
+				ctx.fillStyle = "#ffffff";
+				ctx.fillRect(0, 0, canv.width, canv.height);
+				stack.push({x: rand(0, size), y: rand(0, size), r: rand(0, 256), g: rand(0, 256), b: rand(0, 256)});
+				colors[stack[0].x][stack[0].y] = stack[0];
+				window.requestAnimationFrame(step);
+			}
+			
+			button.onclick = function() {
+				let num = parseInt(prompt("Enter grid side length:"));
+				let sz = parseInt(prompt("Enter output size:"));
+				if (!isNaN(num) && !isNaN(sz) && num > 0 && sz > 0 && num <= 10000 && sz < 10000) {
+					setup(num, sz);
+				}
+			}
+			
+			document.getElementById("newtab").onclick = function() {
+				let tab = window.open("", "_blank");
+				tab.document.head.appendChild(document.createElement("style")).innerText = "img {image-rendering: pixelated;}";
+				tab.document.body.appendChild(document.createElement("img")).src = canv.toDataURL();
+				tab.focus();
+			}
+		</script>
+	</body>
+</html>
